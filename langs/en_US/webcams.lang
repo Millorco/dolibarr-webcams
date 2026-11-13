@@ -1,0 +1,67 @@
+# Copyright (C) 2026 ViewLapse
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+ModuleWebcamsName = Webcams
+ModuleWebcamsDesc = Inventory of the webcams (OpenWrt routers with luci-app-webcam) linked to customers, updated automatically by the routers
+WebcamsDescription = Inventory of the webcams linked to customers
+WebcamsSetup = Webcams setup
+WebcamsSetupPage = Webcams setup page
+WebcamsAbout = About Webcams
+WebcamsAboutPage = Webcams about page
+WebcamsArea = Webcams
+Webcam = Webcam
+Webcams = Webcams
+New_Webcam = New webcam
+List_Webcam = List of webcams
+WebcamRefHelp = Webcams sent by a router get WC- followed by the MAC address
+WebcamName = Name
+Customer = Customer
+WebcamLocation = Location
+WebcamInstallDate = Installation date
+WebcamSim = SIM / connection
+WebcamPublicUrl = Public photo page
+WebcamLastContact = Last contact
+WebcamLastCapture = Last photo
+WebcamMac = MAC
+WebcamHostname = Hostname
+WebcamRouterModel = Router
+WebcamOpenwrt = OpenWrt
+WebcamKernel = Kernel
+WebcamAppVersion = App version
+WebcamBoardFw = Board firmware
+WebcamCamera = Camera
+WebcamVpnIp = VPN address
+WebcamPublicIp = Public IP
+WebcamWanIp = WAN IP
+WebcamUptime = Uptime (s)
+WebcamMemFree = Free memory (kB)
+WebcamDiskFree = Free space (kB)
+WebcamQueue = Photos in queue
+WebcamUploadProtocol = Upload protocol
+WebcamUploadServer = Upload server
+WebcamUploadDirectory = Upload directory
+WebcamInterval = Interval (min)
+WebcamMaintenance = Maintenance mode
+WebcamHeating = Anti-fog heating
+WebcamMonitoring = Healthchecks ping
+WebcamLatitude = Latitude
+WebcamLongitude = Longitude
+WebcamTemperature = Temperature (°C)
+WebcamHumidity = Humidity (%)
+WebcamLastPhoto = Last photo file
+WebcamFirstContact = First contact
+WebcamReportJson = Last report
+WebcamStatusToInstall = To install
+WebcamStatusInService = In service
+WebcamStatusRetired = Retired
+WebcamsNotResponding = Not responding
+WebcamsOutdated = To update
+WebcamsWithoutCustomer = Without customer
+WebcamsInService = In service
+WebcamsOfflineHours = Hours without reports before a webcam is "not responding"
+Settings = Settings
+About = About

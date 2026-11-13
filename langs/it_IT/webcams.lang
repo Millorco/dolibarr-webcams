@@ -1,0 +1,67 @@
+# Copyright (C) 2026 ViewLapse
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+ModuleWebcamsName = Webcam
+ModuleWebcamsDesc = Inventario delle webcam (router OpenWrt con luci-app-webcam) collegate ai clienti, aggiornato in automatico dai router
+WebcamsDescription = Inventario delle webcam collegate ai clienti
+WebcamsSetup = Impostazioni Webcam
+WebcamsSetupPage = Pagina impostazioni Webcam
+WebcamsAbout = Informazioni su Webcam
+WebcamsAboutPage = Informazioni sul modulo Webcam
+WebcamsArea = Webcam
+Webcam = Webcam
+Webcams = Webcam
+New_Webcam = Nuova webcam
+List_Webcam = Elenco webcam
+WebcamRefHelp = Le webcam inviate da un router hanno WC- seguito dal MAC
+WebcamName = Nome
+Customer = Cliente
+WebcamLocation = Luogo di installazione
+WebcamInstallDate = Data di installazione
+WebcamSim = SIM / connessione
+WebcamPublicUrl = Pagina pubblica delle foto
+WebcamLastContact = Ultimo contatto
+WebcamLastCapture = Ultimo scatto
+WebcamMac = MAC
+WebcamHostname = Nome host
+WebcamRouterModel = Router
+WebcamOpenwrt = OpenWrt
+WebcamKernel = Kernel
+WebcamAppVersion = Versione app
+WebcamBoardFw = Firmware scheda
+WebcamCamera = Fotocamera
+WebcamVpnIp = IP VPN
+WebcamPublicIp = IP pubblico
+WebcamWanIp = IP WAN
+WebcamUptime = Acceso da (s)
+WebcamMemFree = Memoria libera (kB)
+WebcamDiskFree = Spazio libero (kB)
+WebcamQueue = Foto in coda
+WebcamUploadProtocol = Protocollo upload
+WebcamUploadServer = Server di upload
+WebcamUploadDirectory = Cartella di upload
+WebcamInterval = Intervallo scatti (min)
+WebcamMaintenance = Modalità manutenzione
+WebcamHeating = Anti-appannamento
+WebcamMonitoring = Ping healthchecks
+WebcamLatitude = Latitudine
+WebcamLongitude = Longitudine
+WebcamTemperature = Temperatura (°C)
+WebcamHumidity = Umidità (%)
+WebcamLastPhoto = File ultima foto
+WebcamFirstContact = Prima registrazione
+WebcamReportJson = Ultimo invio
+WebcamStatusToInstall = Da installare
+WebcamStatusInService = In servizio
+WebcamStatusRetired = Dismessa
+WebcamsNotResponding = Non rispondono
+WebcamsOutdated = Da aggiornare
+WebcamsWithoutCustomer = Senza cliente
+WebcamsInService = In servizio
+WebcamsOfflineHours = Ore senza invii dopo le quali una webcam "non risponde"
+Settings = Impostazioni
+About = Informazioni
