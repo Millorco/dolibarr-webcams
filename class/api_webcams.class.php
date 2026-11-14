@@ -265,7 +265,7 @@ class Webcams extends DolibarrApi
 	 * location, notes...) is never changed. Changes of versions, camera, VPN
 	 * address and reboots are recorded as events in the webcam agenda.
 	 *
-	 * @param	array	$request_data	JSON sent by the router: mac (required), hostname, model, openwrt, kernel, app_version, board_fw, camera, vpn_ip, wan_ip, uptime, mem_free_kb, disk_free_kb, queue, upload_protocol, upload_server, upload_directory, interval, maintenance, heating, monitoring, lat, lon, temperature, humidity, last_capture_time, last_capture_file
+	 * @param	array	$request_data	JSON sent by the router: mac (required), hostname, model, openwrt, kernel, app_version, board_fw, camera, vpn_ip, wan_ip, uptime, mem_free_kb, disk_free_kb, queue, upload_protocol, upload_server, upload_directory, interval, maintenance, heating, monitoring, lat, lon, temperature, humidity, temperature_ext, humidity_ext (outside sensor, optional), last_capture_time, last_capture_file
 	 * @phan-param ?array<string,mixed> $request_data
 	 * @phpstan-param ?array<string,mixed> $request_data
 	 * @return	array	{ok, id, new}
@@ -344,6 +344,8 @@ class Webcams extends DolibarrApi
 			'longitude' => $num('lon', -180, 180),
 			'temperature' => $num('temperature', -80, 150),
 			'humidity' => $num('humidity', 0, 100),
+			'temperature_ext' => $num('temperature_ext', -80, 150),
+			'humidity_ext' => $num('humidity_ext', 0, 100),
 			'last_capture' => $last ? $last : null,
 			'last_photo' => $str('last_capture_file', 200),
 			'report_json' => json_encode($in, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),

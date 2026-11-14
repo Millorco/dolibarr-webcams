@@ -46,6 +46,8 @@ CREATE TABLE llx_webcams_webcam(
 	longitude double(10,6),
 	temperature double(5,1),
 	humidity double(5,1),
+	temperature_ext double(5,1),
+	humidity_ext double(5,1),
 	last_photo varchar(200),
 	first_contact datetime,
 	report_json text,

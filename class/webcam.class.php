@@ -169,7 +169,9 @@ class Webcam extends CommonObject
 		'longitude' => array('type' => 'double(10,6)', 'label' => 'WebcamLongitude', 'enabled' => 1, 'position' => 161, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'temperature' => array('type' => 'double(5,1)', 'label' => 'WebcamTemperature', 'enabled' => 1, 'position' => 170, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'humidity' => array('type' => 'double(5,1)', 'label' => 'WebcamHumidity', 'enabled' => 1, 'position' => 171, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
-		'last_photo' => array('type' => 'varchar(200)', 'label' => 'WebcamLastPhoto', 'enabled' => 1, 'position' => 172, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'temperature_ext' => array('type' => 'double(5,1)', 'label' => 'WebcamTemperatureExt', 'enabled' => 1, 'position' => 173, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'humidity_ext' => array('type' => 'double(5,1)', 'label' => 'WebcamHumidityExt', 'enabled' => 1, 'position' => 174, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'last_photo' => array('type' => 'varchar(200)', 'label' => 'WebcamLastPhoto', 'enabled' => 1, 'position' => 175, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'first_contact' => array('type' => 'datetime', 'label' => 'WebcamFirstContact', 'enabled' => 1, 'position' => 180, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'report_json' => array('type' => 'text', 'label' => 'WebcamReportJson', 'enabled' => 1, 'position' => 190, 'notnull' => 0, 'visible' => 0, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'date_creation' => array('type' => 'datetime', 'label' => 'DateCreation', 'enabled' => 1, 'position' => 500, 'notnull' => 1, 'visible' => -2),
@@ -264,6 +266,10 @@ class Webcam extends CommonObject
 	public $temperature;
 	/** @var mixed */
 	public $humidity;
+	/** @var mixed */
+	public $temperature_ext;
+	/** @var mixed */
+	public $humidity_ext;
 	/** @var mixed */
 	public $last_photo;
 	/** @var mixed */

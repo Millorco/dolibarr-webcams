@@ -3,7 +3,7 @@
 Modulo per [Dolibarr ERP/CRM](https://www.dolibarr.org) (versione 20 o più recente) che aggiunge l'oggetto **Webcam**, collegato ai clienti (soggetti terzi), e lo tiene aggiornato con i dati che mandano i router con [luci-app-webcam](https://github.com/Millorco/luci-app-webcam).
 
 - **Menu Webcam → resoconto**: quante webcam sono in servizio, quali non rispondono, quali hanno app o firmware della scheda da aggiornare (confronto con `latest.json`), quali sono senza cliente; elenco con cliente, ultimo contatto, ultimo scatto, versioni, fotocamera e IP nella VPN (link a LuCI).
-- **Scheda webcam**: a sinistra i dati che inserisci tu (nome, cliente, luogo, data di installazione, SIM, pagina pubblica), a destra i dati tecnici del router (modello, OpenWrt, versioni, fotocamera, IP, uptime, memoria e spazio, coda foto, upload, intervallo, manutenzione, anti-appannamento, healthchecks, coordinate, temperatura, ultimo scatto). Schede *Note*, *Documenti* ed *Eventi*: negli eventi c'è la cronologia scritta in automatico (prima registrazione, cambi di versione, fotocamera, IP VPN, server di upload, riavvii).
+- **Scheda webcam**: a sinistra i dati che inserisci tu (nome, cliente, luogo, data di installazione, SIM, pagina pubblica), a destra i dati tecnici del router (modello, OpenWrt, versioni, fotocamera, IP, uptime, memoria e spazio, coda foto, upload, intervallo, manutenzione, anti-appannamento, healthchecks, coordinate, temperatura e umidità interne ed esterne, ultimo scatto). Schede *Note*, *Documenti* ed *Eventi*: negli eventi c'è la cronologia scritta in automatico (prima registrazione, cambi di versione, fotocamera, IP VPN, server di upload, riavvii).
 - **Scheda Webcam nel cliente**: in ogni soggetto terzo, l'elenco delle sue webcam e il pulsante per aggiungerne una.
 - **Elenco webcam** con filtri, colonne a scelta ed export di Dolibarr.
 - **API** `POST /api/index.php/webcams/report`: riceve il JSON di `inventory_report`, riconosce la webcam dal MAC, la crea la prima volta e poi aggiorna solo i dati tecnici. I dati inseriti a mano non vengono mai toccati.
@@ -60,6 +60,8 @@ In *Impostazioni → Altre impostazioni*:
 ## Nuova versione
 
 Aggiorna `$this->version` in `core/modules/modWebcams.class.php`, il file `VERSION` e `ChangeLog.md`, poi pubblica una release su GitHub con tag uguale alla versione: lo zip viene creato e allegato da solo. Per crearlo a mano c'è `./build.sh`. Dolibarr legge `VERSION` per segnalare nella pagina dei moduli che c'è un aggiornamento.
+
+Quando una versione aggiunge colonne (per esempio la 1.1, con temperatura e umidità esterne), dopo aver caricato lo zip disattiva e riattiva il modulo: Dolibarr esegue `sql/update_*.sql` e aggiunge le colonne senza toccare i dati.
 
 ## Licenza
 
