@@ -20,6 +20,7 @@
 use Luracast\Restler\RestException;
 
 dol_include_once('/webcams/class/webcam.class.php');
+dol_include_once('/webcams/lib/webcams_webcam.lib.php');
 
 
 
@@ -265,7 +266,7 @@ class Webcams extends DolibarrApi
 	 * location, notes...) is never changed. Changes of versions, camera, VPN
 	 * address and reboots are recorded as events in the webcam agenda.
 	 *
-	 * @param	array	$request_data	JSON sent by the router: mac (required), hostname, model, openwrt, kernel, app_version, board_fw, camera, vpn_ip, wan_ip, uptime, mem_free_kb, disk_free_kb, queue, upload_protocol, upload_server, upload_directory, interval, maintenance, heating, monitoring, lat, lon, temperature, humidity, temperature_ext, humidity_ext (outside sensor, optional), last_capture_time, last_capture_file
+	 * @param	array	$request_data	JSON sent by the router: mac (required), hostname, model, openwrt, kernel, app_version, board_fw, camera, vpn_ip, wan_ip, uptime, mem_free_kb, disk_free_kb, queue, upload_protocol, upload_server, upload_directory, interval, maintenance, heating, monitoring, lat, lon, temperature, humidity, temperature_ext, humidity_ext (outside sensor, optional), last_capture_time, last_capture_file; optional since module 1.2: camera_serial, shutter_count, shots_total, camera_hours, camera_power_cycles, battery_v, charge_state
 	 * @phan-param ?array<string,mixed> $request_data
 	 * @phpstan-param ?array<string,mixed> $request_data
 	 * @return	array	{ok, id, new}
@@ -346,6 +347,8 @@ class Webcams extends DolibarrApi
 			'humidity' => $num('humidity', 0, 100),
 			'temperature_ext' => $num('temperature_ext', -80, 150),
 			'humidity_ext' => $num('humidity_ext', 0, 100),
+			'battery_v' => $num('battery_v', 0, 100),
+			'charge_state' => (($cs = $str('charge_state', 20)) !== null && preg_match('/^[a-z][a-z0-9_ -]{0,19}$/', strtolower($cs))) ? strtolower($cs) : null,
 			'last_capture' => $last ? $last : null,
 			'last_photo' => $str('last_capture_file', 200),
 			'report_json' => json_encode($in, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT),
@@ -356,6 +359,23 @@ class Webcams extends DolibarrApi
 			'app_version' => 'WebcamAppVersion', 'board_fw' => 'WebcamBoardFw', 'camera' => 'WebcamCamera',
 			'vpn_ip' => 'WebcamVpnIp', 'upload_server' => 'WebcamUploadServer',
 		);
+
+		// Counters of the camera (luci-app-webcam 1.1): saved with the same rules as POST {id}/counters
+		$counters = array(
+			'shutter_count' => $int('shutter_count'),
+			'shots_total' => $int('shots_total'),
+			'camera_hours' => $num('camera_hours', 0, 9999999),
+			'camera_power_cycles' => $int('camera_power_cycles'),
+		);
+		foreach ($counters as $k => $v) {
+			if ($v !== null && $v > 2147483647) {
+				$counters[$k] = null;
+			}
+		}
+		$serial = $str('camera_serial', 64);
+		if ($data['battery_v'] !== null || $data['charge_state'] !== null) {
+			$data['victron_date'] = $now;
+		}
 
 		$object = new Webcam($this->db);
 		$sql = "SELECT rowid FROM ".$this->db->prefix()."webcams_webcam";
@@ -374,10 +394,24 @@ class Webcams extends DolibarrApi
 			foreach ($data as $k => $v) {
 				$object->$k = $v;
 			}
+			$object->camera_serial = $serial;
+			$object->windy_published = 0;
+			foreach ($counters as $k => $v) {
+				$object->$k = $v;
+			}
+			if (array_filter($counters, function ($v) {
+				return $v !== null;
+			})) {
+				$object->counters_date = $now;
+			}
 			if ($object->create($user, 1) <= 0) {
 				throw new RestException(500, 'Error creating webcam', array_merge(array($object->error), $object->errors));
 			}
 			$events[] = 'Prima registrazione'.($data['hostname'] ? ' come '.$data['hostname'] : '');
+			$level = webcamsShutterLevel(webcamsShotsUsed($object));
+			if ($level) {
+				$events[] = $this->_trans($level == 'danger' ? 'WebcamEventShutterLife' : 'WebcamEventShutterWarn', webcamsShotsUsed($object), webcamsShutterLife());
+			}
 		} else {
 			$object->fetch($obj->rowid);
 			global $langs;
@@ -392,6 +426,20 @@ class Webcams extends DolibarrApi
 				if ((int) $data['uptime'] < (int) $object->uptime + $since - 600) {
 					$events[] = 'Riavvio (acceso da '.convertSecondToTime((int) $data['uptime'], 'allhourmin').')';
 				}
+			}
+			// Counters and serial number of the camera: same rules as POST {id}/counters
+			// (a counter does not go back without a change of camera, a new serial
+			// number is recorded in the agenda)
+			$set = array();
+			$updated = array();
+			$ignored = array();
+			$cevents = $this->_applyCounters($object, $serial, $counters, $data['camera'], $set, $updated, $ignored);
+			$events = array_merge($events, $cevents);
+			foreach ($set as $k => $v) {
+				$object->$k = $v;
+			}
+			if ($updated) {
+				$object->counters_date = $now;
 			}
 			// A field missing from the report does not erase the saved value
 			foreach ($data as $k => $v) {
@@ -559,6 +607,941 @@ class Webcams extends DolibarrApi
 		}
 		return $webcam;
 	}
+
+	/* BEGIN API V2 (webcam-portal) */
+
+	/**
+	 * Find a webcam by its MAC address
+	 *
+	 * Used by webcam-portal to link one of its webcams to the Dolibarr card.
+	 *
+	 * @param	string	$mac	MAC address (aa:bb:cc:dd:ee:ff, aa-bb-cc-dd-ee-ff or aabbccddeeff)
+	 * @return	Object			Object with cleaned properties, as GET webcams/{id}
+	 * @phan-return	Webcam
+	 * @phpstan-return	Webcam
+	 *
+	 * In the path the MAC must be written without ':' (aabbccddeeff or aa-bb-cc-dd-ee-ff),
+	 * because Dolibarr refuses ':' in the URL path; with ':' use the query string
+	 * (bymac?mac=aa:bb:cc:dd:ee:ff).
+	 *
+	 * @url	GET bymac/{mac}
+	 * @url	GET bymac
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 */
+	public function getByMac($mac)
+	{
+		if (!DolibarrApiAccess::$user->hasRight('webcams', 'webcam', 'read')) {
+			throw new RestException(403);
+		}
+		$hex = preg_replace('/[^0-9a-f]/', '', strtolower(trim((string) $mac)));
+		if (strlen($hex) != 12 || !preg_match('/^[0-9a-f:\-\.]+$/', strtolower(trim((string) $mac)))) {
+			throw new RestException(400, 'mac invalid');
+		}
+		$mac = implode(':', str_split($hex, 2));
+
+		$sql = "SELECT rowid FROM ".$this->db->prefix()."webcams_webcam";
+		$sql .= " WHERE mac = '".$this->db->escape($mac)."' AND entity IN (".getEntity('webcam').")";
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			throw new RestException(503, 'Error when searching webcam: '.$this->db->lasterror());
+		}
+		$obj = $this->db->fetch_object($resql);
+		if (!$obj) {
+			throw new RestException(404, 'Webcam not found');
+		}
+		if (!DolibarrApi::_checkAccessToResource('webcam', $obj->rowid, 'webcams_webcam')) {
+			throw new RestException(403, 'Access to instance id='.$obj->rowid.' of object not allowed for login '.DolibarrApiAccess::$user->login);
+		}
+		if ($this->webcam->fetch($obj->rowid) <= 0) {
+			throw new RestException(404, 'Webcam not found');
+		}
+		return $this->_cleanObjectDatas($this->webcam);
+	}
+
+	/**
+	 * Publication data written by webcam-portal
+	 *
+	 * Updates only portal_slug, url_current, windy_published and windy_id (fields
+	 * missing from the request are not changed). A change of windy_published is
+	 * recorded in the agenda of the webcam.
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{portal_slug, url_current, windy_published, windy_id}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, id}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	PUT {id}/portal
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 500 System error
+	 */
+	public function putPortal($id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		$in = is_array($request_data) ? $request_data : array();
+
+		$set = array();
+		if (array_key_exists('portal_slug', $in)) {
+			$v = $this->_inString($in, 'portal_slug', 64);
+			if ($v !== null && !preg_match('/^[a-z0-9][a-z0-9_-]{0,63}$/', $v)) {
+				throw new RestException(400, 'portal_slug invalid');
+			}
+			$set['portal_slug'] = $v;
+		}
+		if (array_key_exists('url_current', $in)) {
+			$v = $this->_inString($in, 'url_current', 255);
+			if ($v !== null && (!preg_match('/^https?:\/\//i', $v) || !filter_var($v, FILTER_VALIDATE_URL))) {
+				throw new RestException(400, 'url_current invalid');
+			}
+			$set['url_current'] = $v;
+		}
+		if (array_key_exists('windy_published', $in)) {
+			$v = $in['windy_published'];
+			if (!in_array($v, array(0, 1, '0', '1', true, false, null), true)) {
+				throw new RestException(400, 'windy_published must be 0 or 1');
+			}
+			$set['windy_published'] = in_array($v, array(1, '1', true), true) ? 1 : 0;
+		}
+		if (array_key_exists('windy_id', $in)) {
+			$v = $this->_inString($in, 'windy_id', 64);
+			if ($v !== null && !preg_match('/^[A-Za-z0-9_.:-]+$/', $v)) {
+				throw new RestException(400, 'windy_id invalid');
+			}
+			$set['windy_id'] = $v;
+		}
+		if (!$set) {
+			throw new RestException(400, 'Nothing to update: send portal_slug, url_current, windy_published or windy_id');
+		}
+
+		$events = array();
+		if (isset($set['windy_published']) && (int) $object->windy_published !== $set['windy_published']) {
+			$events[] = $this->_trans($set['windy_published'] ? 'WebcamEventWindyOn' : 'WebcamEventWindyOff');
+		}
+		$this->_updateColumns($object, $set);
+		foreach ($events as $text) {
+			$this->_addEvent($object, $text);
+		}
+
+		return array('ok' => true, 'id' => (int) $object->id);
+	}
+
+	/**
+	 * Counters of the camera and summary of the Victron charge controller, from webcam-portal
+	 *
+	 * Updates only the columns of the counters and Victron, counters_date,
+	 * victron_date and last_telemetry. A counter lower than the saved one with the
+	 * same camera serial number is refused for that field (listed in ignored).
+	 * A different serial number is recorded in the agenda ("Camera changed").
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{time, camera: {model, serial, shutter_count, shots_total, power_on_hours, power_cycles}, power: {battery_v, battery_v_min24, soc_pct, charge_state, yield_yesterday_wh, error}}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, id, updated, ignored}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	POST {id}/counters
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 500 System error
+	 */
+	public function postCounters($id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		$in = is_array($request_data) ? $request_data : array();
+		$now = dol_now();
+		$time = $this->_inTime($in, 'time', $now);
+
+		$cam = (isset($in['camera']) && is_array($in['camera'])) ? $in['camera'] : array();
+		$pow = (isset($in['power']) && is_array($in['power'])) ? $in['power'] : array();
+		if (!$cam && !$pow) {
+			throw new RestException(400, 'camera or power missing');
+		}
+
+		$counters = array(
+			'shutter_count' => $this->_inNumber($cam, 'shutter_count', 0, 2147483647, 'camera.', true),
+			'shots_total' => $this->_inNumber($cam, 'shots_total', 0, 2147483647, 'camera.', true),
+			'camera_hours' => $this->_inNumber($cam, 'power_on_hours', 0, 9999999, 'camera.'),
+			'camera_power_cycles' => $this->_inNumber($cam, 'power_cycles', 0, 2147483647, 'camera.', true),
+		);
+		$serial = $this->_inString($cam, 'serial', 64);
+		$power = array(
+			'battery_v' => $this->_inNumber($pow, 'battery_v', 0, 100, 'power.'),
+			'battery_v_min24' => $this->_inNumber($pow, 'battery_v_min24', 0, 100, 'power.'),
+			'battery_soc' => $this->_inNumber($pow, 'soc_pct', 0, 100, 'power.'),
+			'charge_state' => $this->_inChargeState($pow, 'charge_state'),
+			'solar_wh_yesterday' => $this->_inNumber($pow, 'yield_yesterday_wh', 0, 2147483647, 'power.', true),
+			'victron_error' => $this->_inNumber($pow, 'error', 0, 32767, 'power.', true),
+		);
+
+		$set = array();
+		$updated = array();
+		$ignored = array();
+		$events = $this->_applyCounters($object, $serial, $counters, $this->_inString($cam, 'model', 150), $set, $updated, $ignored);
+		if ($updated) {
+			$set['counters_date'] = $time;
+		}
+		$events = array_merge($events, $this->_applyPower($object, $power, $set, $updated));
+		if (array_intersect(array_keys($power), $updated)) {
+			$set['victron_date'] = $time;
+		}
+		$set['last_telemetry'] = $now;
+
+		$this->_updateColumns($object, $set);
+		foreach ($events as $text) {
+			$this->_addEvent($object, $text);
+		}
+
+		return array('ok' => true, 'id' => (int) $object->id, 'updated' => $updated, 'ignored' => $ignored);
+	}
+
+	/**
+	 * Event from webcam-portal, recorded in the agenda of the webcam
+	 *
+	 * Only important events (severity warning or more) and interventions should
+	 * be sent. A second request with the same portal_event_id returns the event
+	 * already created.
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{type, severity, time, label, note, portal_event_id, url}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, id, actioncomm_id, duplicate}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	POST {id}/events
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 500 System error
+	 * @throws RestException 501 Module Agenda not enabled
+	 */
+	public function postEvents($id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		if (!isModEnabled('agenda')) {
+			throw new RestException(501, 'Module Agenda (events) is not enabled');
+		}
+		if (!DolibarrApiAccess::$user->hasRight('agenda', 'myactions', 'create')) {
+			throw new RestException(403, 'Permission to create events in the agenda missing');
+		}
+		$in = is_array($request_data) ? $request_data : array();
+
+		$type = $this->_inString($in, 'type', 40);
+		if ($type === null || !preg_match('/^[a-z][a-z0-9_.]{1,39}$/', $type)) {
+			throw new RestException(400, 'type missing or invalid');
+		}
+		$severity = $this->_inString($in, 'severity', 10);
+		if (!in_array($severity, array('debug', 'info', 'notice', 'warning', 'error', 'critical'), true)) {
+			throw new RestException(400, 'severity missing or invalid (debug, info, notice, warning, error, critical)');
+		}
+		$label = $this->_inString($in, 'label', 200);
+		if ($label === null) {
+			throw new RestException(400, 'label missing');
+		}
+		$note = isset($in['note']) && !is_array($in['note']) ? dol_substr(trim((string) $in['note']), 0, 5000) : '';
+		$url = $this->_inString($in, 'url', 255);
+		if ($url !== null && (!preg_match('/^https?:\/\//i', $url) || !filter_var($url, FILTER_VALIDATE_URL))) {
+			throw new RestException(400, 'url invalid');
+		}
+		$refext = $this->_inPortalEventId($in);
+		$time = $this->_inTime($in, 'time', dol_now());
+
+		if ($refext) {
+			$existing = $this->_findActionComm($object, $refext);
+			if ($existing) {
+				return array('ok' => true, 'id' => (int) $object->id, 'actioncomm_id' => $existing, 'duplicate' => true);
+			}
+		}
+
+		$text = $note;
+		$text .= ($text !== '' ? "\n\n" : '').$type.' ('.$severity.')';
+		if ($url) {
+			$text .= "\n".$url;
+		}
+		$acid = $this->_addEvent($object, $label, 'AC_WEBCAMS_PORTAL', $time, $refext, $text);
+		if ($acid <= 0) {
+			throw new RestException(500, 'Error creating event');
+		}
+		return array('ok' => true, 'id' => (int) $object->id, 'actioncomm_id' => $acid, 'duplicate' => false);
+	}
+
+	/**
+	 * Open a ticket (module Ticket) for a fault of the webcam
+	 *
+	 * The ticket is linked to the customer of the webcam and to the webcam
+	 * (block "Linked objects" of the card). A second request with the same
+	 * portal_event_id returns the ticket already created.
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{subject, message, type_code, severity_code, category_code, portal_event_id}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, ticket_id, ticket_ref, duplicate}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	POST {id}/tickets
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 500 System error
+	 * @throws RestException 501 Module Ticket not enabled
+	 */
+	public function postTickets($id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		if (!isModEnabled('ticket')) {
+			throw new RestException(501, 'Module Ticket is not enabled');
+		}
+		$user = DolibarrApiAccess::$user;
+		if (!$user->hasRight('ticket', 'write')) {
+			throw new RestException(403, 'Permission to create tickets missing');
+		}
+		require_once DOL_DOCUMENT_ROOT.'/ticket/class/ticket.class.php';
+		$in = is_array($request_data) ? $request_data : array();
+
+		$subject = $this->_inString($in, 'subject', 255);
+		if ($subject === null) {
+			throw new RestException(400, 'subject missing');
+		}
+		$message = isset($in['message']) && !is_array($in['message']) ? trim((string) $in['message']) : '';
+		if ($message === '') {
+			throw new RestException(400, 'message missing');
+		}
+		$refext = $this->_inPortalEventId($in);
+
+		if ($refext) {
+			// llx_ticket has no ref_ext: the reference is kept in extraparams
+			$sql = "SELECT rowid, ref FROM ".$this->db->prefix()."ticket";
+			$sql .= " WHERE extraparams LIKE '%".$this->db->escape($this->db->escapeforlike('"ref_ext":"'.$refext.'"'))."%' AND entity IN (".getEntity('ticket').")";
+			$resql = $this->db->query($sql);
+			if ($resql && ($obj = $this->db->fetch_object($resql))) {
+				return array('ok' => true, 'ticket_id' => (int) $obj->rowid, 'ticket_ref' => $obj->ref, 'duplicate' => true);
+			}
+		}
+
+		$ticket = new Ticket($this->db);
+		$ticket->subject = $subject;
+		$ticket->message = $message;
+		$ticket->type_code = $this->_dictCode('c_ticket_type', $this->_inString($in, 'type_code', 32));
+		$ticket->severity_code = $this->_dictCode('c_ticket_severity', $this->_inString($in, 'severity_code', 32));
+		$ticket->category_code = $this->_dictCode('c_ticket_category', $this->_inString($in, 'category_code', 32));
+		$ticket->fk_soc = $object->fk_soc > 0 ? (int) $object->fk_soc : 0;
+		$ticket->socid = $ticket->fk_soc;
+		$ticket->origin_email = '';
+		$ticket->track_id = generate_random_id(16);
+		$ticket->ref = $ticket->getDefaultRef();
+		$ticket->datec = dol_now();
+		$ticket->context['caller'] = 'webcams';
+
+		$this->db->begin();
+		if ($ticket->create($user) <= 0) {
+			$this->db->rollback();
+			throw new RestException(500, 'Error creating ticket', array_merge(array($ticket->error), $ticket->errors));
+		}
+		if ($refext) {
+			$ticket->extraparams = is_array($ticket->extraparams) ? $ticket->extraparams : array();
+			$ticket->extraparams['ref_ext'] = $refext;
+			if ($ticket->setExtraParameters() <= 0) {
+				$this->db->rollback();
+				throw new RestException(500, 'Error saving portal_event_id in ticket', array($ticket->error));
+			}
+		}
+		if ($ticket->add_object_linked($object->getElementType(), $object->id) <= 0) {
+			$this->db->rollback();
+			throw new RestException(500, 'Error linking ticket to webcam', array_merge(array($ticket->error), $ticket->errors));
+		}
+		$this->db->commit();
+
+		return array('ok' => true, 'ticket_id' => (int) $ticket->id, 'ticket_ref' => $ticket->ref, 'duplicate' => false);
+	}
+
+	/**
+	 * Open a draft intervention (module Interventions) for a visit of the technician
+	 *
+	 * Created for the customer of the webcam (required) and linked to the webcam.
+	 * A second request with the same portal_event_id returns the intervention
+	 * already created.
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{description, date (YYYY-MM-DD), portal_event_id, lines: [{description, duration_min}]}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, fichinter_id, fichinter_ref}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	POST {id}/interventions
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 500 System error
+	 * @throws RestException 501 Module Interventions not enabled
+	 */
+	public function postInterventions($id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		if (!isModEnabled('intervention')) {
+			throw new RestException(501, 'Module Interventions is not enabled');
+		}
+		$user = DolibarrApiAccess::$user;
+		if (!$user->hasRight('ficheinter', 'creer')) {
+			throw new RestException(403, 'Permission to create interventions missing');
+		}
+		if (empty($object->fk_soc) || $object->fk_soc <= 0) {
+			throw new RestException(400, 'The webcam has no customer: link it to a third party first');
+		}
+		require_once DOL_DOCUMENT_ROOT.'/fichinter/class/fichinter.class.php';
+		$in = is_array($request_data) ? $request_data : array();
+
+		$description = isset($in['description']) && !is_array($in['description']) ? trim((string) $in['description']) : '';
+		if ($description === '') {
+			throw new RestException(400, 'description missing');
+		}
+		$date = dol_now();
+		if (isset($in['date']) && $in['date'] !== null && $in['date'] !== '') {
+			if (!is_string($in['date']) || !preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $in['date'], $m) || !checkdate((int) $m[2], (int) $m[3], (int) $m[1])) {
+				throw new RestException(400, 'date invalid (YYYY-MM-DD)');
+			}
+			$date = dol_mktime(12, 0, 0, (int) $m[2], (int) $m[3], (int) $m[1]);
+		}
+		$lines = array();
+		if (isset($in['lines'])) {
+			if (!is_array($in['lines'])) {
+				throw new RestException(400, 'lines must be an array');
+			}
+			foreach (array_values($in['lines']) as $i => $l) {
+				$ldesc = (is_array($l) && isset($l['description']) && !is_array($l['description'])) ? trim((string) $l['description']) : '';
+				$lmin = (is_array($l) && isset($l['duration_min'])) ? $l['duration_min'] : 0;
+				if ($ldesc === '' || !is_numeric($lmin) || $lmin < 0 || $lmin > 100000) {
+					throw new RestException(400, 'lines['.$i.'] invalid: description and duration_min (minutes) required');
+				}
+				$lines[] = array($ldesc, (int) round($lmin * 60));
+			}
+		}
+		$refext = $this->_inPortalEventId($in);
+
+		if ($refext) {
+			$sql = "SELECT rowid, ref FROM ".$this->db->prefix()."fichinter";
+			$sql .= " WHERE ref_ext = '".$this->db->escape($refext)."' AND entity IN (".getEntity('intervention').")";
+			$resql = $this->db->query($sql);
+			if ($resql && ($obj = $this->db->fetch_object($resql))) {
+				return array('ok' => true, 'fichinter_id' => (int) $obj->rowid, 'fichinter_ref' => $obj->ref, 'duplicate' => true);
+			}
+		}
+
+		$fi = new Fichinter($this->db);
+		$fi->socid = (int) $object->fk_soc;
+		$fi->description = $description;
+		$fi->entity = (int) $object->entity;
+		$fi->status = 0;
+		$fi->datec = dol_now();
+		$fi->dateo = $date;
+		$fi->context['caller'] = 'webcams';
+
+		$this->db->begin();
+		if ($fi->create($user) <= 0) {
+			$this->db->rollback();
+			throw new RestException(500, 'Error creating intervention', array_merge(array($fi->error), $fi->errors));
+		}
+		// Fichinter::create() does not save ref_ext
+		if ($refext && !$this->db->query("UPDATE ".$this->db->prefix()."fichinter SET ref_ext = '".$this->db->escape($refext)."' WHERE rowid = ".((int) $fi->id))) {
+			$this->db->rollback();
+			throw new RestException(500, 'Error saving portal_event_id in intervention: '.$this->db->lasterror());
+		}
+		foreach ($lines as $l) {
+			if ($fi->addline($user, $fi->id, $l[0], $date, $l[1]) <= 0) {
+				$this->db->rollback();
+				throw new RestException(500, 'Error adding line to intervention', array_merge(array($fi->error), $fi->errors));
+			}
+		}
+		if ($fi->add_object_linked($object->getElementType(), $object->id) <= 0) {
+			$this->db->rollback();
+			throw new RestException(500, 'Error linking intervention to webcam', array_merge(array($fi->error), $fi->errors));
+		}
+		$this->db->commit();
+		$fi->fetch($fi->id);
+
+		return array('ok' => true, 'fichinter_id' => (int) $fi->id, 'fichinter_ref' => $fi->ref, 'duplicate' => false);
+	}
+
+	/**
+	 * Attach a PDF to the documents of the webcam
+	 *
+	 * The file is saved in the same directory as the Documents tab of the webcam
+	 * and indexed so it is shown there.
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{filename, filecontent (base64), fileencoding ("base64"), overwrite (0/1), description, sha256}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, id, file}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	POST {id}/documents
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 409 File already exists
+	 * @throws RestException 413 File too large
+	 * @throws RestException 422 sha256 does not match
+	 * @throws RestException 500 System error
+	 */
+	public function postDocuments($id, $request_data = null)
+	{
+		global $conf;
+
+		$object = $this->_fetchForPortal($id);
+		require_once DOL_DOCUMENT_ROOT.'/core/lib/files.lib.php';
+		$in = is_array($request_data) ? $request_data : array();
+
+		$filename = dol_sanitizeFileName($this->_inString($in, 'filename', 200) ?? '');
+		if ($filename === '' || !preg_match('/\.pdf$/i', $filename) || $filename[0] === '.') {
+			throw new RestException(400, 'filename missing or not a .pdf');
+		}
+		$encoding = isset($in['fileencoding']) ? (string) $in['fileencoding'] : 'base64';
+		if ($encoding !== 'base64') {
+			throw new RestException(400, 'fileencoding must be base64');
+		}
+		if (empty($in['filecontent']) || !is_string($in['filecontent'])) {
+			throw new RestException(400, 'filecontent missing');
+		}
+		if (strlen($in['filecontent']) > 14 * 1024 * 1024) {
+			throw new RestException(413, 'File larger than 10 MB');
+		}
+		$content = base64_decode($in['filecontent'], true);
+		if ($content === false || $content === '') {
+			throw new RestException(400, 'filecontent is not valid base64');
+		}
+		if (strlen($content) > 10 * 1024 * 1024) {
+			throw new RestException(413, 'File larger than 10 MB');
+		}
+		if (substr($content, 0, 5) !== '%PDF-') {
+			throw new RestException(400, 'The file is not a PDF');
+		}
+		if (!empty($in['sha256'])) {
+			if (!is_string($in['sha256']) || !hash_equals(strtolower($in['sha256']), hash('sha256', $content))) {
+				throw new RestException(422, 'sha256 does not match the file');
+			}
+		}
+		$overwrite = !empty($in['overwrite']);
+		$description = $this->_inString($in, 'description', 255);
+
+		$entity = (int) ($object->entity ?: $conf->entity);
+		$base = !empty($conf->webcams->multidir_output[$entity]) ? $conf->webcams->multidir_output[$entity] : $conf->webcams->dir_output;
+		$rel = 'webcam/'.dol_sanitizeFileName($object->ref);
+		$dir = $base.'/'.$rel;
+		$dest = $dir.'/'.$filename;
+
+		$exists = dol_is_file($dest);
+		if ($exists && !$overwrite) {
+			throw new RestException(409, 'File '.$filename.' already exists (send overwrite = 1 to replace it)');
+		}
+		if (dol_mkdir($dir) < 0) {
+			throw new RestException(500, 'Cannot create directory of the webcam');
+		}
+		$tmp = $dest.'.tmp'.getmypid();
+		if (file_put_contents($tmp, $content) === false || !@rename($tmp, $dest)) {
+			@unlink($tmp);
+			throw new RestException(500, 'Cannot write file');
+		}
+		dolChmod($dest);
+
+		$relindex = preg_replace('/^'.preg_quote(DOL_DATA_ROOT, '/').'\//', '', $dir);
+		if ($exists) {
+			deleteFilesIntoDatabaseIndex($dir, $filename, '');
+		}
+		$res = addFileIntoDatabaseIndex($dir, $filename, '', 'api', 0, $object);
+		if ($res > 0 && $description) {
+			$sql = "UPDATE ".$this->db->prefix()."ecm_files SET description = '".$this->db->escape($description)."'";
+			$sql .= " WHERE filepath = '".$this->db->escape($relindex)."' AND filename = '".$this->db->escape($filename)."'";
+			$sql .= " AND entity = ".((int) $entity);
+			$this->db->query($sql);
+		}
+
+		$this->_addEvent($object, $this->_trans($exists ? 'WebcamEventDocumentReplaced' : 'WebcamEventDocumentAdded', $filename), 'AC_WEBCAMS_PORTAL', 0, '', $description ? $description : '');
+
+		return array('ok' => true, 'id' => (int) $object->id, 'file' => $rel.'/'.$filename);
+	}
+
+	/**
+	 * Check the permission portal and load the webcam
+	 *
+	 * @param	int		$id		ID of webcam
+	 * @return	Webcam
+	 *
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 */
+	private function _fetchForPortal($id)
+	{
+		if (!DolibarrApiAccess::$user->hasRight('webcams', 'webcam', 'portal')) {
+			throw new RestException(403, 'Permission Webcams - Sync data from webcam-portal missing');
+		}
+		if (!DolibarrApi::_checkAccessToResource('webcam', $id, 'webcams_webcam')) {
+			throw new RestException(403, 'Access to instance id='.((int) $id).' of object not allowed for login '.DolibarrApiAccess::$user->login);
+		}
+		$object = new Webcam($this->db);
+		if ((int) $id <= 0 || $object->fetch((int) $id) <= 0) {
+			throw new RestException(404, 'Webcam not found');
+		}
+		// entity is loaded only with multicompany (otherwise the field is disabled)
+		if (!empty($object->entity) && !in_array((int) $object->entity, array_map('intval', explode(',', getEntity('webcam'))), true)) {
+			throw new RestException(404, 'Webcam not found');
+		}
+		return $object;
+	}
+
+	/**
+	 * Apply the counters of the camera to the webcam (shared by report and counters)
+	 *
+	 * @param	Webcam				$object		Webcam (not changed)
+	 * @param	string|null			$serial		Serial number of the camera, null if unknown
+	 * @param	array<string,int|float|null>	$counters	Column => value (null = not sent)
+	 * @param	string|null			$model		Model of the camera, for the text of the event
+	 * @param	array<string,mixed>	$set		Columns to write (completed)
+	 * @param	string[]			$updated	Columns written (completed)
+	 * @param	string[]			$ignored	Columns refused (completed)
+	 * @return	string[]						Texts of the events for the agenda
+	 */
+	private function _applyCounters($object, $serial, $counters, $model, &$set, &$updated, &$ignored)
+	{
+		$events = array();
+		$old = (string) $object->camera_serial;
+		$changed = ($serial !== null && $old !== '' && $serial !== $old);
+		if ($serial !== null && $serial !== $old) {
+			$set['camera_serial'] = $serial;
+			$updated[] = 'camera_serial';
+			if ($changed) {
+				$events[] = $this->_trans('WebcamEventCameraChanged', $old, $serial.($model ? ' ('.$model.')' : ''));
+			}
+		}
+		$before = webcamsShotsUsed($object);
+		$after = array('shutter_count' => $object->shutter_count, 'shots_total' => $object->shots_total);
+		foreach ($counters as $k => $v) {
+			if ($v === null) {
+				// Counters of the old camera are not valid for the new one
+				if ($changed && $object->$k !== null && $object->$k !== '') {
+					$set[$k] = null;
+					$after[$k] = null;
+				}
+				continue;
+			}
+			$cur = $object->$k;
+			if (!$changed && $cur !== null && $cur !== '' && $v < (float) $cur) {
+				$ignored[] = $k;
+				continue;
+			}
+			$set[$k] = $v;
+			$updated[] = $k;
+			if (array_key_exists($k, $after)) {
+				$after[$k] = $v;
+			}
+		}
+		// Shutter life: one event when a threshold is crossed
+		$now = webcamsShotsUsed((object) $after);
+		if ($now !== null) {
+			$life = webcamsShutterLife();
+			$warn = (int) floor($life * getDolGlobalInt('WEBCAMS_SHUTTER_WARN_PCT', 90) / 100);
+			if ($changed) {
+				$before = null;
+			}
+			if ($now >= $life && ($before === null || $before < $life)) {
+				$events[] = $this->_trans('WebcamEventShutterLife', $now, $life);
+			} elseif ($now >= $warn && $now < $life && ($before === null || $before < $warn)) {
+				$events[] = $this->_trans('WebcamEventShutterWarn', $now, $life);
+			}
+		}
+		return $events;
+	}
+
+	/**
+	 * Apply the summary of the Victron charge controller to the webcam
+	 *
+	 * @param	Webcam				$object		Webcam (not changed)
+	 * @param	array<string,int|float|string|null>	$power	Column => value (null = not sent)
+	 * @param	array<string,mixed>	$set		Columns to write (completed)
+	 * @param	string[]			$updated	Columns written (completed)
+	 * @return	string[]						Texts of the events for the agenda
+	 */
+	private function _applyPower($object, $power, &$set, &$updated)
+	{
+		$events = array();
+		foreach ($power as $k => $v) {
+			if ($v === null) {
+				continue;
+			}
+			$set[$k] = $v;
+			$updated[] = $k;
+		}
+		if (isset($power['victron_error']) && $power['victron_error'] !== null) {
+			$olderr = ($object->victron_error === null || $object->victron_error === '') ? 0 : (int) $object->victron_error;
+			if ((int) $power['victron_error'] !== $olderr) {
+				$events[] = $power['victron_error'] ? $this->_trans('WebcamEventVictronError', $power['victron_error']) : $this->_trans('WebcamEventVictronOk');
+			}
+		}
+		return $events;
+	}
+
+	/**
+	 * Write some columns of the webcam, without touching the others
+	 *
+	 * @param	Webcam				$object		Webcam (properties updated too)
+	 * @param	array<string,mixed>	$set		Column => value (datetime columns as timestamp)
+	 * @return	void
+	 *
+	 * @throws RestException 500 System error
+	 */
+	private function _updateColumns($object, $set)
+	{
+		$parts = array();
+		foreach ($set as $k => $v) {
+			if (!isset($object->fields[$k])) {
+				continue;
+			}
+			$type = $object->fields[$k]['type'];
+			if ($v === null || $v === '') {
+				$sqlv = 'NULL';
+			} elseif ($type == 'datetime') {
+				$sqlv = "'".$this->db->idate($v)."'";
+			} elseif (preg_match('/^(integer|double)/', $type)) {
+				$sqlv = is_float($v) ? (string) $v : (string) ((int) $v);
+			} else {
+				$sqlv = "'".$this->db->escape((string) $v)."'";
+			}
+			$parts[] = $k.' = '.$sqlv;
+			$object->$k = $v;
+		}
+		if (!$parts) {
+			return;
+		}
+		$sql = "UPDATE ".$this->db->prefix().$object->table_element." SET ".implode(', ', $parts);
+		$sql .= ", fk_user_modif = ".((int) DolibarrApiAccess::$user->id);
+		$sql .= " WHERE rowid = ".((int) $object->id);
+		if (!$this->db->query($sql)) {
+			throw new RestException(500, 'Error updating webcam: '.$this->db->lasterror());
+		}
+	}
+
+	/**
+	 * Add an event in the agenda of the webcam, as report does
+	 *
+	 * @param	Webcam	$object		Webcam
+	 * @param	string	$text		Text (label is "<ref> - <text>")
+	 * @param	string	$code		Code of the event
+	 * @param	int		$datep		Date of the event (0 = now)
+	 * @param	string	$refext		External reference (portal:<id>)
+	 * @param	string	$note		Private note (default: the text)
+	 * @return	int					Id of the event, 0 if module Agenda is off, <0 if error
+	 */
+	private function _addEvent($object, $text, $code = 'AC_WEBCAMS_PORTAL', $datep = 0, $refext = '', $note = '')
+	{
+		if (!isModEnabled('agenda')) {
+			return 0;
+		}
+		require_once DOL_DOCUMENT_ROOT.'/comm/action/class/actioncomm.class.php';
+		$user = DolibarrApiAccess::$user;
+		$ev = new ActionComm($this->db);
+		$ev->type_code = 'AC_OTH_AUTO';
+		$ev->code = $code;
+		$ev->label = dol_trunc($object->ref.' - '.$text, 255, 'right', 'UTF-8', 1);
+		$ev->note_private = $note !== '' ? $note : $text;
+		$ev->datep = $datep ? $datep : dol_now();
+		$ev->percentage = -1;
+		$ev->userownerid = $user->id;
+		$ev->socid = $object->fk_soc > 0 ? $object->fk_soc : 0;
+		$ev->fk_element = $object->id;
+		$ev->elementtype = $object->element.'@'.$object->module;
+		if ($refext) {
+			$ev->ref_ext = $refext;
+		}
+		$res = $ev->create($user);
+		if ($res <= 0) {
+			dol_syslog(__METHOD__.' '.$ev->error, LOG_ERR);
+		}
+		return $res;
+	}
+
+	/**
+	 * Find an event of the webcam by external reference
+	 *
+	 * @param	Webcam	$object		Webcam
+	 * @param	string	$refext		portal:<id>
+	 * @return	int					Id of the event or 0
+	 */
+	private function _findActionComm($object, $refext)
+	{
+		$sql = "SELECT id FROM ".$this->db->prefix()."actioncomm";
+		$sql .= " WHERE ref_ext = '".$this->db->escape($refext)."'";
+		$sql .= " AND fk_element = ".((int) $object->id)." AND elementtype = '".$this->db->escape($object->element.'@'.$object->module)."'";
+		$sql .= " AND entity IN (".getEntity('agenda').")";
+		$resql = $this->db->query($sql);
+		if ($resql && ($obj = $this->db->fetch_object($resql))) {
+			return (int) $obj->id;
+		}
+		return 0;
+	}
+
+	/**
+	 * Code of a dictionary of the module Ticket: the code sent if it exists and is
+	 * active, otherwise the default of the dictionary (use_default), otherwise ''.
+	 *
+	 * @param	string		$table	c_ticket_type, c_ticket_severity or c_ticket_category
+	 * @param	string|null	$code	Code sent
+	 * @return	string
+	 */
+	private function _dictCode($table, $code)
+	{
+		$sql = "SELECT code FROM ".$this->db->prefix().$table." WHERE active = 1 AND entity IN (".getEntity($table).")";
+		$sql .= " ORDER BY ".($code !== null ? "(code = '".$this->db->escape($code)."') DESC, " : "")."use_default DESC, pos ASC";
+		$resql = $this->db->query($sql);
+		$first = '';
+		while ($resql && ($obj = $this->db->fetch_object($resql))) {
+			if ($code !== null && $obj->code === $code) {
+				return $code;
+			}
+			if ($first === '') {
+				$first = (string) $obj->code;
+			}
+		}
+		return $first;
+	}
+
+	/**
+	 * Translated text with the language file of the module
+	 *
+	 * @param	string	$key	Key
+	 * @param	mixed	$p1		Parameter 1
+	 * @param	mixed	$p2		Parameter 2
+	 * @return	string
+	 */
+	private function _trans($key, $p1 = '', $p2 = '')
+	{
+		global $langs;
+		$langs->load('webcams@webcams');
+		return $langs->transnoentitiesnoconv($key, $p1, $p2);
+	}
+
+	/**
+	 * String from the request, without control characters, null if missing or empty
+	 *
+	 * @param	array<string,mixed>	$in		Request
+	 * @param	string				$k		Key
+	 * @param	int					$max	Maximum length
+	 * @return	string|null
+	 */
+	private function _inString($in, $k, $max)
+	{
+		if (!isset($in[$k]) || is_array($in[$k]) || is_bool($in[$k])) {
+			return null;
+		}
+		$v = trim((string) preg_replace('/[\x00-\x1F\x7F]+/', ' ', (string) $in[$k]));
+		return $v === '' ? null : dol_substr($v, 0, $max);
+	}
+
+	/**
+	 * Number from the request: null if missing or null, 400 if not valid
+	 *
+	 * @param	array<string,mixed>	$in		Request
+	 * @param	string				$k		Key
+	 * @param	float				$min	Minimum
+	 * @param	float				$max	Maximum
+	 * @param	string				$prefix	Prefix of the key in the error message
+	 * @param	bool				$isint	Integer
+	 * @return	int|float|null
+	 *
+	 * @throws RestException 400 Bad request
+	 */
+	private function _inNumber($in, $k, $min, $max, $prefix = '', $isint = false)
+	{
+		if (!array_key_exists($k, $in) || $in[$k] === null) {
+			return null;
+		}
+		$v = $in[$k];
+		if (is_bool($v) || !is_numeric($v) || $v < $min || $v > $max || ($isint && floor((float) $v) != $v)) {
+			throw new RestException(400, $prefix.$k.' invalid (number '.$min.'-'.$max.')');
+		}
+		return $isint ? (int) $v : round((float) $v, 2);
+	}
+
+	/**
+	 * Charge state of the Victron (bulk, absorption, float, off, fault...)
+	 *
+	 * @param	array<string,mixed>	$in		Request
+	 * @param	string				$k		Key
+	 * @return	string|null
+	 *
+	 * @throws RestException 400 Bad request
+	 */
+	private function _inChargeState($in, $k)
+	{
+		$v = $this->_inString($in, $k, 20);
+		if ($v !== null && !preg_match('/^[a-z][a-z0-9_ -]{0,19}$/', strtolower($v))) {
+			throw new RestException(400, 'power.'.$k.' invalid');
+		}
+		return $v === null ? null : strtolower($v);
+	}
+
+	/**
+	 * Unix time from the request (seconds UTC), $default if missing
+	 *
+	 * @param	array<string,mixed>	$in			Request
+	 * @param	string				$k			Key
+	 * @param	int					$default	Default
+	 * @return	int
+	 *
+	 * @throws RestException 400 Bad request
+	 */
+	private function _inTime($in, $k, $default)
+	{
+		if (!isset($in[$k]) || $in[$k] === '') {
+			return $default;
+		}
+		if (!is_numeric($in[$k]) || $in[$k] < 946684800 || $in[$k] > dol_now() + 86400) {
+			throw new RestException(400, $k.' invalid (Unix time in seconds, not in the future)');
+		}
+		return (int) $in[$k];
+	}
+
+	/**
+	 * External reference portal:<portal_event_id>, '' if not sent
+	 *
+	 * @param	array<string,mixed>	$in		Request
+	 * @return	string
+	 *
+	 * @throws RestException 400 Bad request
+	 */
+	private function _inPortalEventId($in)
+	{
+		if (!isset($in['portal_event_id']) || $in['portal_event_id'] === '') {
+			return '';
+		}
+		$v = $in['portal_event_id'];
+		if (is_bool($v) || !is_numeric($v) || (int) $v <= 0 || floor((float) $v) != $v) {
+			throw new RestException(400, 'portal_event_id invalid');
+		}
+		return 'portal:'.((int) $v);
+	}
+
+	/* END API V2 (webcam-portal) */
 
 	/* END MODULEBUILDER API WEBCAM */
 
