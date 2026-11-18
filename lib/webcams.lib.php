@@ -22,6 +22,8 @@
  * \brief   Library files with common functions for Webcams
  */
 
+require_once __DIR__.'/webcams_compat.lib.php';
+
 /**
  * Prepare admin pages header
  *

@@ -80,7 +80,7 @@ class modWebcams extends DolibarrModules
 		$this->editor_squarred_logo = '';					// Must be image filename into the module/img directory followed with @modulename. Example: 'myimage.png@webcams'
 
 		// Possible values for version are: 'development', 'experimental', 'dolibarr', 'dolibarr_deprecated', 'experimental_deprecated' or a version string like 'x.y.z'
-		$this->version = '1.1';
+		$this->version = '1.2';
 		// Url to the file with your last numberversion of this module
 		$this->url_last_version = 'https://raw.githubusercontent.com/Millorco/dolibarr-webcams/main/VERSION';
 
@@ -324,6 +324,11 @@ class modWebcams extends DolibarrModules
 		$this->rights[$r][1] = 'Delete webcams'; // Permission label
 		$this->rights[$r][4] = 'webcam';
 		$this->rights[$r][5] = 'delete'; // In php code, permission will be checked by test if ($user->hasRight('webcams', 'webcam', 'delete'))
+		$r++;
+		$this->rights[$r][0] = $this->numero . sprintf("%02d", ($o * 10) + 4); // 51730014 (contratto API Dolibarr v2)
+		$this->rights[$r][1] = 'Sync data from webcam-portal (counters, Victron, events, documents)'; // Permission label
+		$this->rights[$r][4] = 'webcam';
+		$this->rights[$r][5] = 'portal'; // In php code, permission will be checked by test if ($user->hasRight('webcams', 'webcam', 'portal'))
 		$r++;
 		/* END MODULEBUILDER PERMISSIONS */
 
