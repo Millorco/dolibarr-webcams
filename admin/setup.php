@@ -104,82 +104,47 @@ $formSetup = new FormSetup($db);
 
 // Enter here all parameters in your setup page
 
-// Setup conf for selection of an URL
-$item = $formSetup->newItem('WEBCAMS_MYPARAM1');
-$item->fieldParams['isMandatory'] = 1;
-$item->fieldAttr['placeholder'] = (empty($_SERVER['HTTPS']) ? 'http://' : 'https://') . $_SERVER['HTTP_HOST'];
+$item = $formSetup->newItem('WEBCAMS_OFFLINE_HOURS');
+$item->defaultFieldValue = '13';
+$item->fieldAttr['type'] = 'number';
+$item->fieldAttr['min'] = '1';
+$item->cssClass = 'maxwidth100';
+
+$item = $formSetup->newItem('WEBCAMS_LATEST_URL');
+$item->fieldAttr['placeholder'] = 'https://raw.githubusercontent.com/Millorco/luci-app-webcam/main/latest.json';
 $item->cssClass = 'minwidth500';
 
-// Setup conf for selection of a simple string input
-$item = $formSetup->newItem('WEBCAMS_MYPARAM2');
-$item->defaultFieldValue = 'default value';
-$item->fieldAttr['placeholder'] = 'A placeholder here';
-$item->helpText = 'Tooltip text';
+$formSetup->newItem('WebcamPortal')->setAsTitle();
 
-// Setup conf for selection of a simple textarea input but we replace the text of field title
-$item = $formSetup->newItem('WEBCAMS_MYPARAM3');
-$item->nameText = $item->getNameText().' more html text ';
-
-// Setup conf for a selection of a Thirdparty
-$item = $formSetup->newItem('WEBCAMS_MYPARAM4');
-$item->setAsThirdpartyType();
-
-// Setup conf for a selection of a boolean
-$formSetup->newItem('WEBCAMS_MYPARAM5')->setAsYesNo();	 // ->fieldParams['alertifoff'] = 1 or ->fieldParams['alertifon'] = 1;
-
-// Setup conf for a selection of an Email template of type thirdparty
-$formSetup->newItem('WEBCAMS_MYPARAM6')->setAsEmailTemplate('thirdparty');
-
-// Setup conf for a selection of a secured key
-//$formSetup->newItem('WEBCAMS_MYPARAM7')->setAsSecureKey();
-
-// Setup conf for a selection of a Product
-$formSetup->newItem('WEBCAMS_MYPARAM8')->setAsProduct();
-
-// Add a title for a new section
-$formSetup->newItem('NewSection')->setAsTitle();
-
-$TField = array(
-	'test01' => $langs->trans('test01'),
-	'test02' => $langs->trans('test02'),
-	'test03' => $langs->trans('test03'),
-	'test04' => $langs->trans('test04'),
-	'test05' => $langs->trans('test05'),
-	'test06' => $langs->trans('test06'),
-);
-
-// Setup conf for a simple combo list
-$formSetup->newItem('WEBCAMS_MYPARAM9')->setAsSelect($TField);
-
-// Setup conf for a multiselect combo list
-$item = $formSetup->newItem('WEBCAMS_MYPARAM10');
-$item->setAsMultiSelect($TField);
-$item->helpText = $langs->transnoentities('WEBCAMS_MYPARAM10');
-
-// Setup conf for a category selection
-$formSetup->newItem('WEBCAMS_CATEGORY_ID_XXX')->setAsCategory('product');
-
-// Setup conf WEBCAMS_MYPARAM10
-$item = $formSetup->newItem('WEBCAMS_MYPARAM10');
-$item->setAsColor();
-$item->defaultFieldValue = '#FF0000';
-//$item->fieldValue = '';
-//$item->fieldAttr = array() ; // fields attribute only for compatible fields like input text
-//$item->fieldOverride = false; // set this var to override field output will override $fieldInputOverride and $fieldOutputOverride too
-//$item->fieldInputOverride = false; // set this var to override field input
-//$item->fieldOutputOverride = false; // set this var to override field output
-
-$item = $formSetup->newItem('WEBCAMS_MYPARAM11')->setAsHtml();
-$item->nameText = $item->getNameText().' more html text ';
-$item->fieldInputOverride = '';
-$item->helpText = $langs->transnoentities('HelpMessage');
+$item = $formSetup->newItem('WEBCAMS_PORTAL_URL');
+$item->fieldAttr['placeholder'] = 'https://portal.viewlapse.com';
+$item->helpText = $langs->transnoentities('WEBCAMS_PORTAL_URLTooltip');
 $item->cssClass = 'minwidth500';
 
-$item = $formSetup->newItem('WEBCAMS_MYPARAM12');
-$item->fieldOverride = "Value forced, can't be modified";
-$item->cssClass = 'minwidth500';
+$item = $formSetup->newItem('WEBCAMS_PORTAL_OFFLINE_HOURS');
+$item->defaultFieldValue = '2';
+$item->fieldAttr['type'] = 'number';
+$item->fieldAttr['min'] = '1';
+$item->cssClass = 'maxwidth100';
 
-//$item = $formSetup->newItem('WEBCAMS_MYPARAM13')->setAsDate();	// Not yet implemented
+$item = $formSetup->newItem('WEBCAMS_SHUTTER_LIFE');
+$item->defaultFieldValue = '100000';
+$item->fieldAttr['type'] = 'number';
+$item->fieldAttr['min'] = '1000';
+$item->helpText = $langs->transnoentities('WEBCAMS_SHUTTER_LIFETooltip');
+$item->cssClass = 'maxwidth150';
+
+$item = $formSetup->newItem('WEBCAMS_SHUTTER_WARN_PCT');
+$item->defaultFieldValue = '90';
+$item->fieldAttr['type'] = 'number';
+$item->fieldAttr['min'] = '1';
+$item->fieldAttr['max'] = '100';
+$item->cssClass = 'maxwidth100';
+
+$item = $formSetup->newItem('WEBCAMS_RTTYS_URL');
+$item->fieldAttr['placeholder'] = 'https://remote.viewlapse.com';
+$item->helpText = $langs->transnoentities('WEBCAMS_RTTYS_URLTooltip');
+$item->cssClass = 'minwidth500';
 
 // End of definition of parameters
 
@@ -210,6 +175,23 @@ if (versioncompare(explode('.', DOL_VERSION), array(15)) < 0 && $action == 'upda
 }
 
 include DOL_DOCUMENT_ROOT.'/core/actions_setmoduleoptions.inc.php';
+
+// Database not upgraded (module updated without disabling and enabling it again)
+$dbtoupgrade = false;
+$resql = $db->query("SHOW COLUMNS FROM ".$db->prefix()."webcams_webcam LIKE 'last_telemetry'");
+if ($resql && !$db->num_rows($resql)) {
+	$dbtoupgrade = true;
+}
+if ($action == 'upgradedb' && $dbtoupgrade) {
+	require_once dol_buildpath('/webcams/core/modules/modWebcams.class.php', 0);
+	$mod = new modWebcams($db);
+	if ($mod->init() > 0) {
+		setEventMessages($langs->trans("WebcamsDbUpgraded"), null, 'mesgs');
+		$dbtoupgrade = false;
+	} else {
+		setEventMessages($mod->error, $mod->errors, 'errors');
+	}
+}
 
 if ($action == 'updateMask') {
 	$maskconst = GETPOST('maskconst', 'aZ09');
@@ -333,6 +315,12 @@ print dol_get_fiche_head($head, 'settings', $langs->trans($title), -1, "webcams@
 
 // Setup page goes here
 echo '<span class="opacitymedium">'.$langs->trans("WebcamsSetupPage").'</span><br><br>';
+
+if ($dbtoupgrade) {
+	require_once dol_buildpath('/webcams/core/modules/modWebcams.class.php', 0);
+	$mod = new modWebcams($db);
+	print info_admin($langs->trans("WebcamsDbToUpgrade", $mod->version).' <a class="butAction small" href="'.$_SERVER["PHP_SELF"].'?action=upgradedb&token='.newToken().'">'.$langs->trans("WebcamsDbUpgrade").'</a>', 0, 0, 'warning');
+}
 
 
 /*if ($action == 'edit') {

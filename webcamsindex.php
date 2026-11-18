@@ -69,6 +69,7 @@ if (!$res) {
  * @var User $user
  */
 require_once __DIR__.'/class/webcam.class.php';
+require_once __DIR__.'/lib/webcams_webcam.lib.php';
 
 /**
  * @var Conf $conf
@@ -86,6 +87,9 @@ if (!isModEnabled('webcams') || !$user->hasRight('webcams', 'webcam', 'read')) {
 $now = dol_now();
 $offlinehours = getDolGlobalInt('WEBCAMS_OFFLINE_HOURS', 13);
 $filter = GETPOST('filter', 'aZ09');
+// Contact with webcam-portal is checked only when the portal is configured
+$useportal = (getDolGlobalString('WEBCAMS_PORTAL_URL') !== '');
+$portalhours = getDolGlobalInt('WEBCAMS_PORTAL_OFFLINE_HOURS', 2);
 
 // Latest versions from latest.json of luci-app-webcam (cached 12 h)
 $latestapp = '';
@@ -112,7 +116,7 @@ $isold = function ($have, $latest) {
 };
 
 $sql = "SELECT t.rowid, t.ref, t.label, t.hostname, t.status, t.fk_soc, t.last_contact, t.last_capture, t.app_version, t.board_fw,";
-$sql .= " t.camera, t.vpn_ip, t.maintenance, s.nom as socname";
+$sql .= " t.camera, t.vpn_ip, t.maintenance, t.shutter_count, t.shots_total, t.last_telemetry, s.nom as socname";
 $sql .= " FROM ".$db->prefix()."webcams_webcam as t";
 $sql .= " LEFT JOIN ".$db->prefix()."societe as s ON s.rowid = t.fk_soc";
 $sql .= " WHERE t.entity IN (".getEntity('webcam').")";
@@ -124,7 +128,7 @@ if (!$resql) {
 }
 
 $rows = array();
-$stats = array('total' => 0, 'ok' => 0, 'offline' => 0, 'outdated' => 0, 'nocustomer' => 0);
+$stats = array('total' => 0, 'ok' => 0, 'offline' => 0, 'outdated' => 0, 'nocustomer' => 0, 'shutter' => 0, 'noportal' => 0);
 while ($obj = $db->fetch_object($resql)) {
 	if ((int) $obj->status === Webcam::STATUS_CANCELED) {
 		continue;
@@ -132,6 +136,10 @@ while ($obj = $db->fetch_object($resql)) {
 	$lc = $obj->last_contact ? $db->jdate($obj->last_contact) : 0;
 	$obj->offline = (!$lc || $lc < $now - $offlinehours * 3600);
 	$obj->outdated = $isold($obj->app_version, $latestapp) || $isold($obj->board_fw, $latestfw);
+	$obj->shots = webcamsShotsUsed($obj);
+	$obj->shutterlevel = webcamsShutterLevel($obj->shots);
+	$lt = $obj->last_telemetry ? $db->jdate($obj->last_telemetry) : 0;
+	$obj->noportal = $useportal && (!$lt || $lt < $now - $portalhours * 3600);
 	$stats['total']++;
 	$stats[$obj->offline ? 'offline' : 'ok']++;
 	if ($obj->outdated) {
@@ -140,6 +148,12 @@ while ($obj = $db->fetch_object($resql)) {
 	if (empty($obj->fk_soc)) {
 		$stats['nocustomer']++;
 	}
+	if ($obj->shutterlevel) {
+		$stats['shutter']++;
+	}
+	if ($obj->noportal) {
+		$stats['noportal']++;
+	}
 	$keep = true;
 	if ($filter === 'offline') {
 		$keep = $obj->offline;
@@ -147,6 +161,10 @@ while ($obj = $db->fetch_object($resql)) {
 		$keep = $obj->outdated;
 	} elseif ($filter === 'nocustomer') {
 		$keep = empty($obj->fk_soc);
+	} elseif ($filter === 'shutter') {
+		$keep = (bool) $obj->shutterlevel;
+	} elseif ($filter === 'noportal') {
+		$keep = $obj->noportal;
 	}
 	if ($keep) {
 		$rows[] = $obj;
@@ -174,13 +192,21 @@ print $tile($langs->trans('WebcamStatusInService').' ✓', $stats['ok'], $base, 
 print $tile($langs->trans('WebcamsNotResponding'), $stats['offline'], $base.'?filter=offline', $stats['offline'] ? '#b42318' : 'inherit');
 print $tile($langs->trans('WebcamsOutdated'), $stats['outdated'], $base.'?filter=outdated', $stats['outdated'] ? '#b54708' : 'inherit');
 print $tile($langs->trans('WebcamsWithoutCustomer'), $stats['nocustomer'], $base.'?filter=nocustomer', $stats['nocustomer'] ? '#b54708' : 'inherit');
+print $tile($langs->trans('WebcamsShutterNearEnd'), $stats['shutter'], $base.'?filter=shutter', $stats['shutter'] ? '#b54708' : 'inherit');
+if ($useportal) {
+	print $tile($langs->trans('WebcamsNoPortal'), $stats['noportal'], $base.'?filter=noportal', $stats['noportal'] ? '#b42318' : 'inherit');
+}
 print $tile($langs->trans('Customers'), $customers, DOL_URL_ROOT.'/societe/list.php?type=c', 'inherit');
 print '</div>';
 
 print '<div class="div-table-responsive-no-min"><table class="noborder centpercent">';
 print '<tr class="liste_titre"><th>'.$langs->trans('Status').'</th><th>'.$langs->trans('Webcam').'</th><th>'.$langs->trans('Customer').'</th>';
 print '<th>'.$langs->trans('WebcamLastContact').'</th><th>'.$langs->trans('WebcamLastCapture').'</th><th>'.$langs->trans('WebcamAppVersion').'</th>';
-print '<th>'.$langs->trans('WebcamBoardFw').'</th><th>'.$langs->trans('WebcamCamera').'</th><th>'.$langs->trans('WebcamVpnIp').'</th></tr>';
+print '<th>'.$langs->trans('WebcamBoardFw').'</th><th>'.$langs->trans('WebcamCamera').'</th><th class="right">'.$langs->trans('WebcamShutterLife').'</th>';
+if ($useportal) {
+	print '<th>'.$langs->trans('WebcamLastTelemetry').'</th>';
+}
+print '<th>'.$langs->trans('WebcamVpnIp').'</th></tr>';
 
 $webcam = new Webcam($db);
 $soc = new Societe($db);
@@ -213,11 +239,22 @@ foreach ($rows as $obj) {
 		print '<td>'.($isold($v[0], $v[1]) ? '<span class="warning" title="'.dol_escape_htmltag($v[1]).'">'.dol_escape_htmltag($v[0]).' ↑</span>' : dol_escape_htmltag((string) $v[0])).'</td>';
 	}
 	print '<td class="tdoverflowmax150">'.dol_escape_htmltag((string) $obj->camera).'</td>';
+	if ($obj->shots !== null) {
+		$pct = round($obj->shots * 100 / webcamsShutterLife()).'%';
+		$title = $langs->trans('WebcamShutterUsed', $pct, price($obj->shots, 0, $langs, 0, 0));
+		print '<td class="right nowraponall" title="'.dol_escape_htmltag($title).'">'.($obj->shutterlevel ? dolGetBadge($pct, '', $obj->shutterlevel) : $pct).'</td>';
+	} else {
+		print '<td class="right opacitymedium">-</td>';
+	}
+	if ($useportal) {
+		$lt = $obj->last_telemetry ? $db->jdate($obj->last_telemetry) : 0;
+		print '<td class="nowraponall">'.($obj->noportal ? '<span class="error">'.($lt ? dol_print_date($lt, 'dayhour', 'tzuserrel') : '-').'</span>' : dol_print_date($lt, 'dayhour', 'tzuserrel')).'</td>';
+	}
 	print '<td>'.($obj->vpn_ip ? '<a href="http://'.dol_escape_htmltag($obj->vpn_ip).'/" target="_blank" rel="noopener">'.dol_escape_htmltag($obj->vpn_ip).'</a>' : '').'</td>';
 	print '</tr>';
 }
 if (!$rows) {
-	print '<tr><td colspan="9"><span class="opacitymedium">'.$langs->trans('NoRecordFound').'</span></td></tr>';
+	print '<tr><td colspan="'.($useportal ? 11 : 10).'"><span class="opacitymedium">'.$langs->trans('NoRecordFound').'</span></td></tr>';
 }
 print '</table></div>';
 

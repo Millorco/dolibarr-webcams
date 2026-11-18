@@ -459,12 +459,23 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 
 	// Common attributes
 	$keyforbreak = 'last_contact';	// Technical data from the router in the second column
+	// Counters, Victron and portal are shown below with their own layout
+	$customfields = array('shutter_count', 'shots_total', 'camera_hours', 'camera_power_cycles', 'counters_date',
+		'battery_v', 'battery_v_min24', 'battery_soc', 'charge_state', 'solar_wh_yesterday', 'victron_error', 'victron_date',
+		'portal_slug', 'url_current', 'windy_published', 'windy_id');
+	$savedfields = $object->fields;
+	foreach ($customfields as $k) {
+		unset($object->fields[$k]);
+	}
 	//unset($object->fields['fk_project']);				// Hide field already shown in banner
 	//unset($object->fields['fk_soc']);					// Hide field already shown in banner
 	include DOL_DOCUMENT_ROOT.'/core/tpl/commonfields_view.tpl.php';
 
 	// Other attributes. Fields from hook formObjectOptions and Extrafields.
 	include DOL_DOCUMENT_ROOT.'/core/tpl/extrafields_view.tpl.php';
+
+	$object->fields = $savedfields;
+	print webcamsCardTechRows($object);
 
 	print '</table>';
 	print '</div>';
@@ -549,6 +560,13 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 			// Back to draft
 			if ($object->status == $object::STATUS_VALIDATED) {
 				print dolGetButtonAction('', $langs->trans('SetToDraft'), 'default', $_SERVER["PHP_SELF"].'?id='.$object->id.'&action=confirm_setdraft&confirm=yes&token='.newToken(), '', $permissiontoadd);
+			}
+
+			// Remote access with rttys (device id = ref of the webcam)
+			$rttys = webcamsRttysUrls($object->ref);
+			if ($rttys) {
+				print dolGetButtonAction($langs->trans('WebcamRemoteTerminalHelp', $object->ref), $langs->trans('WebcamRemoteTerminal'), 'default', $rttys['terminal'], '', 1, array('attr' => array('target' => '_blank', 'rel' => 'noopener')));
+				print dolGetButtonAction($langs->trans('WebcamRemoteTerminalHelp', $object->ref), $langs->trans('WebcamRemoteLuci'), 'default', $rttys['luci'], '', 1, array('attr' => array('target' => '_blank', 'rel' => 'noopener')));
 			}
 
 			// Modify
