@@ -144,6 +144,14 @@ class Webcam extends CommonObject
 		'url_current' => array('type' => 'url', 'label' => 'WebcamUrlCurrent', 'enabled' => 1, 'position' => 67, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'windy_published' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamWindyPublished', 'enabled' => 1, 'position' => 68, 'notnull' => 0, 'visible' => -5, 'default' => '0', 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'windy_id' => array('type' => 'varchar(64)', 'label' => 'WebcamWindyId', 'enabled' => 1, 'position' => 69, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'sla_enabled' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamSlaEnabled', 'enabled' => 1, 'position' => 80, 'notnull' => 1, 'default' => '0', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamSlaEnabledHelp', 'lang' => 'webcams@webcams'),
+		'sla_offline_hours' => array('type' => 'integer', 'label' => 'WebcamSlaOfflineHours', 'enabled' => 1, 'position' => 81, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'help' => 'WebcamSlaOfflineHoursHelp', 'lang' => 'webcams@webcams'),
+		'sla_response_days' => array('type' => 'integer', 'label' => 'WebcamSlaResponseDays', 'enabled' => 1, 'position' => 82, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'help' => 'WebcamSlaResponseDaysHelp', 'lang' => 'webcams@webcams'),
+		'sla_target_pct' => array('type' => 'double(5,2)', 'label' => 'WebcamSlaTargetPct', 'enabled' => 1, 'position' => 83, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'help' => 'WebcamSlaTargetPctHelp', 'lang' => 'webcams@webcams'),
+		'sla_hours' => array('type' => 'varchar(11)', 'label' => 'WebcamSlaHours', 'enabled' => 1, 'position' => 84, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth150', 'placeholder' => '07:00-19:00', 'help' => 'WebcamSlaHoursHelp', 'lang' => 'webcams@webcams'),
+		'sla_weekdays' => array('type' => 'varchar(7)', 'label' => 'WebcamSlaWeekdays', 'enabled' => 1, 'position' => 85, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth100', 'placeholder' => '12345', 'help' => 'WebcamSlaWeekdaysHelp', 'lang' => 'webcams@webcams'),
+		'availability_pct' => array('type' => 'double(5,2)', 'label' => 'WebcamAvailabilityPct', 'enabled' => 1, 'position' => 88, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'isameasure' => 2, 'lang' => 'webcams@webcams'),
+		'availability_period' => array('type' => 'varchar(7)', 'label' => 'WebcamAvailabilityPeriod', 'enabled' => 1, 'position' => 89, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'note_public' => array('type' => 'html', 'label' => 'NotePublic', 'enabled' => 1, 'position' => 70, 'notnull' => 0, 'visible' => 0, 'cssview' => 'wordbreak'),
 		'note_private' => array('type' => 'html', 'label' => 'NotePrivate', 'enabled' => 1, 'position' => 71, 'notnull' => 0, 'visible' => 0, 'cssview' => 'wordbreak'),
 		'last_contact' => array('type' => 'datetime', 'label' => 'WebcamLastContact', 'enabled' => 1, 'position' => 100, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
@@ -326,6 +334,22 @@ class Webcam extends CommonObject
 	/** @var mixed */
 	public $victron_date;
 	/** @var mixed */
+	public $sla_enabled;
+	/** @var mixed */
+	public $sla_offline_hours;
+	/** @var mixed */
+	public $sla_response_days;
+	/** @var mixed */
+	public $sla_target_pct;
+	/** @var mixed */
+	public $sla_hours;
+	/** @var mixed */
+	public $sla_weekdays;
+	/** @var mixed */
+	public $availability_pct;
+	/** @var mixed */
+	public $availability_period;
+	/** @var mixed */
 	public $last_photo;
 	/** @var mixed */
 	public $first_contact;
@@ -377,7 +401,7 @@ class Webcam extends CommonObject
 	 *               	If name matches '@ClassNAme:FilePathClass;ParentFkFieldName' it will
 	 *               	call method deleteByParentField(parentId, ParentFkFieldName) to fetch and delete child object
 	 */
-	protected $childtablesoncascade = array();
+	protected $childtablesoncascade = array('webcams_availability');
 
 	/**
 	 * @var WebcamLine[]     Array of subtable lines
@@ -438,6 +462,9 @@ class Webcam extends CommonObject
 	 */
 	public function create(User $user, $notrigger = 0)
 	{
+		if ($this->checkSla() < 0) {
+			return -1;
+		}
 		$result = $this->createCommon($user, $notrigger);
 
 		// uncomment lines below if you want to validate object after creation
@@ -675,7 +702,65 @@ class Webcam extends CommonObject
 	 */
 	public function update(User $user, $notrigger = 0)
 	{
+		if ($this->checkSla() < 0) {
+			return -1;
+		}
 		return $this->updateCommon($user, $notrigger);
+	}
+
+	/**
+	 * Check and normalize the fields of the availability commitment (sla_*)
+	 * of the rental contract. Empty values mean the defaults of the setup.
+	 *
+	 * @return	int<-1,1>		1 if OK, -1 if a value is not valid (message in errors)
+	 */
+	public function checkSla()
+	{
+		global $langs;
+
+		$langs->load('webcams@webcams');
+		$err = array();
+		$empty = function ($v) {
+			return $v === null || $v === '';
+		};
+		$this->sla_enabled = empty($this->sla_enabled) ? 0 : 1;
+		if (!$empty($this->sla_offline_hours) && (!is_numeric($this->sla_offline_hours) || (int) $this->sla_offline_hours < 1 || (int) $this->sla_offline_hours > 720)) {
+			$err[] = $langs->transnoentities('WebcamSlaOfflineHours').': 1-720';
+		}
+		if (!$empty($this->sla_response_days) && (!is_numeric($this->sla_response_days) || (int) $this->sla_response_days < 1 || (int) $this->sla_response_days > 90)) {
+			$err[] = $langs->transnoentities('WebcamSlaResponseDays').': 1-90';
+		}
+		if (!$empty($this->sla_target_pct)) {
+			$v = str_replace(',', '.', (string) $this->sla_target_pct);
+			if (!is_numeric($v) || (float) $v <= 0 || (float) $v > 100) {
+				$err[] = $langs->transnoentities('WebcamSlaTargetPct').': 0-100';
+			}
+		}
+		if (!$empty($this->sla_hours)) {
+			$v = preg_replace('/\s+/', '', (string) $this->sla_hours);
+			// Same check as webcam_service.sla_hours of webcam-portal; 24:00 only as end
+			if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d-(([01]\d|2[0-3]):[0-5]\d|24:00)$/', $v) || substr($v, 0, 5) === substr($v, 6)) {
+				$err[] = $langs->transnoentities('WebcamSlaHours').': HH:MM-HH:MM';
+			} else {
+				$this->sla_hours = $v;
+			}
+		}
+		if (!$empty($this->sla_weekdays)) {
+			$v = (string) $this->sla_weekdays;
+			if (!preg_match('/^[1-7]{1,7}$/', $v)) {
+				$err[] = $langs->transnoentities('WebcamSlaWeekdays').': 1-7';
+			} else {
+				$d = array_unique(str_split($v));
+				sort($d);
+				$this->sla_weekdays = implode('', $d);
+			}
+		}
+		if ($err) {
+			// Only error (not errors): the card shows both
+			$this->error = $langs->transnoentities('WebcamSlaInvalid').' '.implode('; ', $err);
+			return -1;
+		}
+		return 1;
 	}
 
 	/**
