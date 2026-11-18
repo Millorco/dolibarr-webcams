@@ -2,12 +2,12 @@
 
 Modulo per [Dolibarr ERP/CRM](https://www.dolibarr.org) (versione 20 o più recente) che aggiunge l'oggetto **Webcam**, collegato ai clienti (soggetti terzi), e lo tiene aggiornato con i dati che mandano i router con [luci-app-webcam](https://github.com/Millorco/luci-app-webcam).
 
-- **Menu Webcam → resoconto**: quante webcam sono in servizio, quali non rispondono, quali hanno app o firmware della scheda da aggiornare (confronto con `latest.json`), quali sono senza cliente, quali reflex sono vicine alla fine della vita dell'otturatore e (se il portal è configurato) quali non hanno contatto col portal; elenco con cliente, ultimo contatto, ultimo scatto, versioni, fotocamera, vita dell'otturatore, ultimo contatto col portal e IP nella VPN (link a LuCI).
-- **Scheda webcam**: a sinistra i dati che inserisci tu (nome, cliente, luogo, data di installazione, SIM, pagina pubblica), a destra i dati tecnici del router (modello, OpenWrt, versioni, fotocamera, IP, uptime, memoria e spazio, coda foto, upload, intervallo, manutenzione, anti-appannamento, healthchecks, coordinate, temperatura e umidità interne ed esterne, ultimo scatto), i contatori della reflex con la percentuale di vita dell'otturatore (avviso arancione dalla soglia, rosso a fine vita), il riassunto Victron (tensione, minimo 24 h, fase di carica, produzione di ieri, errori), i link a `current.jpg` e alla pagina pubblica del portal, il flag *Pubblicata su Windy*. Pulsanti **Terminale remoto** e **LuCI remota** se è impostato l'URL di rttys. Schede *Note*, *Documenti* ed *Eventi*: negli eventi c'è la cronologia scritta in automatico (prima registrazione, cambi di versione, fotocamera e numero di serie, IP VPN, server di upload, riavvii, otturatore a fine vita, errori Victron, Windy, documenti ed eventi importanti del portal). Nel riquadro *Oggetti collegati* i ticket e gli interventi aperti dal portal.
+- **Menu Webcam → resoconto**: quante webcam sono in servizio, quali non rispondono, quali hanno app o firmware della scheda da aggiornare (confronto con `latest.json`), quali sono senza cliente, quali reflex sono vicine alla fine della vita dell'otturatore, (se il portal è configurato) quali non hanno contatto col portal e, dalla 1.3, quali webcam con impegno di disponibilità sono sotto la soglia nel mese (riquadro con il mese scelto, predefinito il mese scorso); elenco con cliente, ultimo contatto, ultimo scatto, versioni, fotocamera, vita dell'otturatore, ultimo contatto col portal e IP nella VPN (link a LuCI).
+- **Scheda webcam**: a sinistra i dati che inserisci tu (nome, cliente, luogo, data di installazione, SIM, pagina pubblica), a destra i dati tecnici del router (modello, OpenWrt, versioni, fotocamera, IP, uptime, memoria e spazio, coda foto, upload, intervallo, manutenzione, anti-appannamento, healthchecks, coordinate, temperatura e umidità interne ed esterne, ultimo scatto), i contatori della reflex con la percentuale di vita dell'otturatore (avviso arancione dalla soglia, rosso a fine vita), il riassunto Victron (tensione, minimo 24 h, fase di carica, produzione di ieri, errori), i link a `current.jpg` e alla pagina pubblica del portal, il flag *Pubblicata su Windy*. Dalla 1.3 l'**impegno di disponibilità** del contratto di noleggio (campi modificabili, vedi sotto), l'ultima disponibilità mensile e, in basso a destra, la tabella della **disponibilità degli ultimi 12 mesi** con il confronto con la soglia. Pulsanti **Terminale remoto** e **LuCI remota** se è impostato l'URL di rttys. Schede *Note*, *Documenti* ed *Eventi*: negli eventi c'è la cronologia scritta in automatico (prima registrazione, cambi di versione, fotocamera e numero di serie, IP VPN, server di upload, riavvii, otturatore a fine vita, errori Victron, Windy, documenti ed eventi importanti del portal). Nel riquadro *Oggetti collegati* i ticket e gli interventi aperti dal portal.
 - **Scheda Webcam nel cliente**: in ogni soggetto terzo, l'elenco delle sue webcam e il pulsante per aggiungerne una.
 - **Elenco webcam** con filtri, colonne a scelta ed export di Dolibarr.
 - **API** `POST /api/index.php/webcams/report`: riceve il JSON di `inventory_report`, riconosce la webcam dal MAC, la crea la prima volta e poi aggiorna solo i dati tecnici. I dati inseriti a mano non vengono mai toccati.
-- **API per webcam-portal** (dalla 1.2): contatori, Victron, dati di pubblicazione, eventi, ticket, interventi e PDF (vedi *API per webcam-portal* sotto).
+- **API per webcam-portal** (dalla 1.2): contatori, Victron, dati di pubblicazione, eventi, ticket, interventi e PDF; dalla 1.3 soglie del contratto, aggiornamento e chiusura dei ticket, registro della disponibilità (vedi *API per webcam-portal* sotto).
 
 Contratti, preventivi, fatture (anche ricorrenti ed elettroniche con i moduli italiani) e il resto del CRM sono quelli di Dolibarr.
 
@@ -63,8 +63,18 @@ Dalla 1.2 il modulo implementa il contratto [API Dolibarr v2](https://github.com
 | `POST {id}/tickets` | Ticket per il cliente della webcam, collegato alla webcam; idempotente con `portal_event_id` (salvato in `extraparams` del ticket: la tabella dei ticket non ha `ref_ext`). Tipo, gravità e categoria inesistenti diventano i predefiniti del modulo Ticket | Ticket → Creare/modificare; 501 se il modulo Ticket è spento |
 | `POST {id}/interventions` | Intervento in bozza per il cliente (400 se la webcam non ha cliente), con righe e durate, collegato alla webcam; idempotente con `portal_event_id` | Interventi → Creare/modificare; 501 se il modulo Interventi è spento |
 | `POST {id}/documents` | PDF in base64 (max 10 MB, `sha256` facoltativo) nei documenti della webcam; 409 se esiste e `overwrite` = 0, 422 se lo `sha256` non corrisponde | |
+| `GET {id}/portal` (1.3) | In una chiamata: cliente, dati di pubblicazione, impegno di disponibilità (`sla`, con i predefiniti delle impostazioni al posto dei campi vuoti), soglie dell'otturatore (`shutter`, livello come nella scheda), link di rttys (`{}` se l'URL non è impostato) | |
+| `PUT {id}/tickets/{ticket_id}` (1.3) | Messaggio privato nel ticket (obbligatorio, idempotente con `portal_event_id`); `close` = 1 chiude solo se il ticket è *non letto* o *letto*, altrimenti risponde `closed: false, close_refused: "in_progress"` e lo chiude l'operatore; `severity_code` solo verso l'alto. Solo ticket aperti dal portal e collegati alla webcam (403 altrimenti); 409 se già chiuso o annullato | Ticket → Creare/modificare |
+| `POST {id}/availability` (1.3) | Disponibilità del mese (`period` AAAA-MM, percentuale, ore previste/escluse/disponibili, incidenti, interventi in ritardo, `final`). Inserisce o aggiorna la riga del mese; 409 se il mese è già definitivo. Con `final` = 1 aggiorna l'ultima disponibilità della webcam e scrive un evento in agenda (`AC_WEBCAMS_SLA` se l'impegno non è rispettato) | |
+| `GET {id}/availability?from=AAAA-MM&to=AAAA-MM` (1.3) | Mesi registrati, dal più vecchio | |
 
 Errori: `401` chiave sbagliata, `403` permesso mancante, `404` webcam inesistente, `400` dati non validi.
+
+### Ticket per regola (1.3)
+
+`POST {id}/tickets` accetta in più `portal_rule` (id della regola, es. `enclosure.heater`), `portal_alert_id` e `due_date` (AAAA-MM-GG, scadenza dell'intervento), salvati in `extraparams` del ticket accanto a `ref_ext`. **Un solo ticket aperto per webcam e regola**: se c'è già un ticket collegato alla webcam con la stessa regola e non chiuso né annullato, il modulo non ne apre un altro, aggiunge il messaggio come messaggio privato e risponde con quel ticket, `"duplicate": true, "reason": "open_for_rule"`. Il messaggio può essere testo semplice con a capo (viene convertito in HTML). In fondo al testo del ticket il modulo aggiunge i dati della webcam (riferimento, cliente, luogo, ultimi contatti, batteria, impegno di disponibilità, scadenza) e i link alla scheda Dolibarr, alla pagina pubblica e a `current.jpg` del portal e a rttys (terminale e LuCI), senza ripetere quelli già presenti nel messaggio. Nessuna email al cliente. La risposta contiene anche `status` (stato del ticket).
+
+Per leggere lo stato dei ticket il portal usa l'API standard `GET /tickets/{id}`: all'utente `webcam-portal` serve anche **Ticket → Leggere**.
 
 ### Utente `webcam-portal`
 
@@ -113,14 +123,39 @@ In *Impostazioni → Moduli → Webcam → Impostazioni*:
 | `WEBCAMS_SHUTTER_LIFE` | `100000` | Vita prevista dell'otturatore in scatti (Canon EOS 2000D/1500D) |
 | `WEBCAMS_SHUTTER_WARN_PCT` | `90` | Percentuale della vita da cui la reflex è "vicina alla fine della vita" |
 | `WEBCAMS_RTTYS_URL` | vuoto | URL base di rttys per i pulsanti di accesso remoto |
+| `WEBCAMS_SLA_OFFLINE_HOURS` | `3` | Impegno di disponibilità: ore senza foto prima dell'intervento, per le webcam con il campo vuoto |
+| `WEBCAMS_SLA_RESPONSE_DAYS` | `3` | Impegno di disponibilità: giorni per l'intervento, per le webcam con il campo vuoto |
+| `WEBCAMS_SLA_TARGET_PCT` | `98` | Impegno di disponibilità: disponibilità mensile minima, per le webcam con il campo vuoto |
 
-Per la vita dell'otturatore conta il contatore letto dalla fotocamera (`shutter_count`) se c'è, altrimenti quello del router (`shots_total`).
+Per la vita dell'otturatore conta il contatore letto dalla fotocamera (`shutter_count`) se c'è, altrimenti quello del router (`shots_total`). Il modulo è la **sola fonte degli avvisi dell'otturatore** in Dolibarr: `report` e `counters` scrivono un evento in agenda una volta per soglia (90% e fine vita) e per fotocamera; il portal non manda eventi né ticket per l'otturatore e legge le stesse soglie con `GET {id}/portal`.
+
+## Impegno di disponibilità (1.3)
+
+Il contratto di noleggio può promettere al cliente un intervento entro X giorni quando la webcam resta N ore senza foto e una disponibilità mensile minima. I valori stanno sulla **scheda della webcam** (*Modifica*), perché la webcam passa da un cliente all'altro:
+
+| Campo | Significato | Vuoto |
+|---|---|---|
+| Impegno di disponibilità attivo (`sla_enabled`) | sì/no | no |
+| Ore senza foto prima dell'intervento (`sla_offline_hours`) | N, nelle ore di scatto previste | `WEBCAMS_SLA_OFFLINE_HOURS` (3) |
+| Giorni per l'intervento (`sla_response_days`) | X, giorni di calendario | `WEBCAMS_SLA_RESPONSE_DAYS` (3) |
+| Disponibilità minima (`sla_target_pct`) | percentuale mensile promessa | `WEBCAMS_SLA_TARGET_PCT` (98) |
+| Ore di scatto previste (`sla_hours`) | `HH:MM-HH:MM` ora locale, es. `07:00-19:00` | 24 ore |
+| Giorni previsti (`sla_weekdays`) | cifre ISO 1 = lunedì ... 7 = domenica, es. `12345` | tutti |
+
+Il portal le legge con `GET {id}/portal`, calcola la disponibilità (ore con almeno una foto sulle ore previste meno quelle escluse) e la registra ogni mese con `POST {id}/availability` nella tabella `llx_webcams_availability`. La scheda mostra gli ultimi 12 mesi con la soglia (badge verde/rosso per le webcam con impegno; arancione se una webcam senza impegno è sotto la soglia predefinita), il resoconto le webcam con impegno sotto la soglia nel mese scelto; l'elenco webcam può mostrare la colonna *Disponibilità* (ultimo mese definitivo). Un mese definitivo non si modifica più dalle API: le correzioni si fanno a mano.
 
 ## Nuova versione
 
 Aggiorna `$this->version` in `core/modules/modWebcams.class.php`, il file `VERSION` e `ChangeLog.md`, poi pubblica una release su GitHub con tag uguale alla versione: lo zip viene creato e allegato da solo. Per crearlo a mano c'è `./build.sh`. Dolibarr legge `VERSION` per segnalare nella pagina dei moduli che c'è un aggiornamento.
 
 Quando una versione aggiunge colonne (per esempio la 1.1, con temperatura e umidità esterne), dopo aver caricato lo zip disattiva e riattiva il modulo: Dolibarr esegue `sql/update_*.sql` e aggiunge le colonne senza toccare i dati.
+
+### Aggiornare alla 1.3 (dalla 1.2, 1.1 o 1.0)
+
+1. Carica lo zip della 1.3 (o `git pull` nella cartella `custom/webcams`).
+2. *Impostazioni → Moduli*: **disattiva e riattiva Webcam** (oppure il pulsante **Aggiorna il database** nelle impostazioni del modulo, che segnala se mancano colonne o la tabella nuova). Dolibarr crea `llx_webcams_availability` ed esegue `update_1.0-1.1.sql`, `update_1.1-1.2.sql` e `update_1.2-1.3.sql`: si parte indifferentemente dalla 1.0, 1.1 o 1.2, i dati e i permessi degli utenti restano. Finché il database non è aggiornato la scheda e le API non trovano le webcam.
+3. Cancella `api/temp/routes.php` nella cartella dei documenti se le API rispondono 404 sugli endpoint nuovi.
+4. Nessun permesso nuovo: all'utente `webcam-portal` aggiungi **Ticket → Leggere** se non ce l'ha. Controlla i valori predefiniti dell'impegno di disponibilità nelle impostazioni e compila i campi sulle webcam con contratto.
 
 ### Aggiornare alla 1.2 (dalla 1.1 o dalla 1.0)
 

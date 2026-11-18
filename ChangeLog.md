@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3
+
+Contratto 1.1 di Webcam 2.0 (API Dolibarr 2.1): assistenza automatica del portal.
+
+- Impegno di disponibilità del contratto di noleggio sulla webcam, modificabile dalla scheda: `sla_enabled`, `sla_offline_hours`, `sla_response_days`, `sla_target_pct`, `sla_hours`, `sla_weekdays` (controllati al salvataggio), con i predefiniti nelle impostazioni del modulo (`WEBCAMS_SLA_OFFLINE_HOURS` 3, `WEBCAMS_SLA_RESPONSE_DAYS` 3, `WEBCAMS_SLA_TARGET_PCT` 98). Colonne `availability_pct` e `availability_period` con l'ultima disponibilità definitiva.
+- Tabella nuova `llx_webcams_availability` (registro mensile, cancellato insieme alla webcam). Script `sql/update_1.2-1.3.sql`, che funziona anche partendo dalla 1.0 e dalla 1.1.
+- API nuove: `GET webcams/{id}/portal` (cliente, pubblicazione, impegno, soglie dell'otturatore, rttys), `PUT webcams/{id}/tickets/{ticket_id}` (messaggio privato, chiusura solo se non letto o letto, gravità solo verso l'alto, idempotente), `POST` e `GET webcams/{id}/availability`.
+- `POST webcams/{id}/tickets`: `portal_rule`, `portal_alert_id`, `due_date`; un solo ticket aperto per webcam e regola (`reason: open_for_rule`); messaggio in testo semplice convertito in HTML; in fondo al ticket dati della webcam e link alla scheda, al portal e a rttys; `status` nella risposta.
+- Evento in agenda per ogni mese definitivo ("Disponibilità novembre 2026: 99,12% (impegno 98%: rispettato)"), con codice `AC_WEBCAMS_SLA` se l'impegno non è rispettato.
+- Scheda webcam: riepilogo dell'impegno, ultima disponibilità mensile, tabella degli ultimi 12 mesi con il confronto con la soglia. Resoconto: webcam con impegno sotto la soglia nel mese (riquadro e filtro, mese scelto con le frecce).
+- Vita dell'otturatore: stessa soglia (arrotondata per eccesso) per il livello nella scheda, gli eventi in agenda e `GET {id}/portal`; resta il modulo la sola fonte degli avvisi.
+- Elenco webcam compatibile con Dolibarr 20 (template e opzione della colonna delle caselle di Dolibarr 21+).
+
+
 ## 1.2
 
 Contratto API Dolibarr v2 di Webcam 2.0 (portal `webcam-portal`).
