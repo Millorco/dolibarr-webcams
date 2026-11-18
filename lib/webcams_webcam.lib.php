@@ -168,15 +168,222 @@ function webcamsShutterLevel($shots)
 	if ($shots === null) {
 		return '';
 	}
-	$life = webcamsShutterLife();
-	$pct = getDolGlobalInt('WEBCAMS_SHUTTER_WARN_PCT', 90);
-	if ($shots >= $life) {
+	if ($shots >= webcamsShutterLife()) {
 		return 'danger';
 	}
-	if ($shots >= $life * $pct / 100) {
+	if ($shots >= webcamsShutterWarnShots()) {
 		return 'warning';
 	}
 	return '';
+}
+
+/**
+ * Percentage of the shutter life from which the camera is near the end of its
+ * life, from setup (WEBCAMS_SHUTTER_WARN_PCT)
+ *
+ * @return	int		1-100 (default 90)
+ */
+function webcamsShutterWarnPct()
+{
+	$v = getDolGlobalInt('WEBCAMS_SHUTTER_WARN_PCT', 90);
+	return ($v >= 1 && $v <= 100) ? $v : 90;
+}
+
+/**
+ * Shots from which the camera is near the end of the shutter life. Same
+ * threshold for the level (webcamsShutterLevel), the events in the agenda and
+ * GET webcams/{id}/portal.
+ *
+ * @return	int
+ */
+function webcamsShutterWarnShots()
+{
+	return (int) ceil(webcamsShutterLife() * webcamsShutterWarnPct() / 100);
+}
+
+/**
+ * Availability commitment of the rental contract, with the defaults of the
+ * setup applied to the empty fields (as GET webcams/{id}/portal)
+ *
+ * @param	object	$obj	Webcam or row with the sla_* columns
+ * @return	array{enabled:bool,offline_hours:int,response_days:int,target_pct:float,hours:string,weekdays:string,defaults:string[]}
+ */
+function webcamsSla($obj)
+{
+	$def = array(
+		'offline_hours' => getDolGlobalInt('WEBCAMS_SLA_OFFLINE_HOURS', 3) > 0 ? getDolGlobalInt('WEBCAMS_SLA_OFFLINE_HOURS', 3) : 3,
+		'response_days' => getDolGlobalInt('WEBCAMS_SLA_RESPONSE_DAYS', 3) > 0 ? getDolGlobalInt('WEBCAMS_SLA_RESPONSE_DAYS', 3) : 3,
+		'target_pct' => webcamsSlaDefaultTarget(),
+	);
+	$res = array('enabled' => !empty($obj->sla_enabled), 'offline_hours' => 0, 'response_days' => 0, 'target_pct' => 0.0, 'hours' => '', 'weekdays' => '', 'defaults' => array());
+	foreach ($def as $k => $v) {
+		$col = 'sla_'.$k;
+		$cur = isset($obj->$col) ? $obj->$col : null;
+		if ($cur === null || $cur === '' || (float) $cur <= 0) {
+			$res[$k] = $v;
+			$res['defaults'][] = $k;
+		} else {
+			$res[$k] = ($k == 'target_pct') ? round((float) $cur, 2) : (int) $cur;
+		}
+	}
+	$res['target_pct'] = (float) $res['target_pct'];
+	$res['hours'] = isset($obj->sla_hours) ? (string) $obj->sla_hours : '';
+	$res['weekdays'] = isset($obj->sla_weekdays) ? (string) $obj->sla_weekdays : '';
+	return $res;
+}
+
+/**
+ * Default monthly availability promised (WEBCAMS_SLA_TARGET_PCT, 98)
+ *
+ * @return	float
+ */
+function webcamsSlaDefaultTarget()
+{
+	$v = str_replace(',', '.', getDolGlobalString('WEBCAMS_SLA_TARGET_PCT', '98'));
+	return (is_numeric($v) && (float) $v > 0 && (float) $v <= 100) ? round((float) $v, 2) : 98.0;
+}
+
+/**
+ * Percentage for display: 99,12% or 98%
+ *
+ * @param	float|string|null	$v		Value
+ * @return	string
+ */
+function webcamsFormatPct($v)
+{
+	global $langs;
+	if ($v === null || $v === '') {
+		return '-';
+	}
+	$v = round((float) $v, 2);
+	$dec = ($v == round($v)) ? 0 : (($v == round($v, 1)) ? 1 : 2);
+	return price($v, 0, $langs, 0, $dec, $dec).'%';
+}
+
+/**
+ * Month AAAA-MM for display (novembre 2026)
+ *
+ * @param	string		$period		AAAA-MM
+ * @param	Translate	$outlangs	Language
+ * @return	string
+ */
+function webcamsFormatPeriod($period, $outlangs = null)
+{
+	global $langs;
+	$l = $outlangs ? $outlangs : $langs;
+	if (!preg_match('/^(\d{4})-(\d{2})$/', (string) $period, $m)) {
+		return (string) $period;
+	}
+	$l->load('main');
+	return $l->transnoentitiesnoconv('Month'.$m[2]).' '.$m[1];
+}
+
+/**
+ * Months of the availability register of a webcam, most recent first
+ *
+ * @param	DoliDB	$db			Database
+ * @param	int		$webcamid	Id of webcam
+ * @param	string	$from		First month AAAA-MM ('' = no limit)
+ * @param	string	$to			Last month AAAA-MM ('' = no limit)
+ * @param	int		$limit		Max rows (0 = all)
+ * @return	array<int,object>	Rows of llx_webcams_availability
+ */
+function webcamsAvailabilityMonths($db, $webcamid, $from = '', $to = '', $limit = 0)
+{
+	$sql = "SELECT rowid, fk_soc, period, availability_pct, expected_hours, excluded_hours, available_hours, incidents, downtime_hours,";
+	$sql .= " response_breaches, sla_enabled, target_pct, sla_met, final, date_creation, tms";
+	$sql .= " FROM ".$db->prefix()."webcams_availability";
+	$sql .= " WHERE fk_webcam = ".((int) $webcamid)." AND entity IN (".getEntity('webcam').")";
+	if ($from !== '') {
+		$sql .= " AND period >= '".$db->escape($from)."'";
+	}
+	if ($to !== '') {
+		$sql .= " AND period <= '".$db->escape($to)."'";
+	}
+	$sql .= " ORDER BY period DESC";
+	if ($limit > 0) {
+		$sql .= $db->plimit($limit);
+	}
+	$rows = array();
+	$resql = $db->query($sql);
+	while ($resql && ($obj = $db->fetch_object($resql))) {
+		$rows[] = $obj;
+	}
+	return $rows;
+}
+
+/**
+ * Whether a month of the register is below the threshold: commitment not met
+ * (sla_met = 0) or, without the field, percentage below the target
+ *
+ * @param	object		$row		Row of llx_webcams_availability
+ * @param	float		$target		Target to use when the row has none
+ * @return	bool|null				null if unknown (no useful hours)
+ */
+function webcamsAvailabilityBelow($row, $target)
+{
+	if ($row->sla_met !== null && $row->sla_met !== '' && !empty($row->sla_enabled)) {
+		return !$row->sla_met;
+	}
+	if ($row->availability_pct === null || $row->availability_pct === '') {
+		return null;
+	}
+	$t = ($row->target_pct !== null && $row->target_pct !== '') ? (float) $row->target_pct : (float) $target;
+	return (float) $row->availability_pct < $t;
+}
+
+/**
+ * Table of the availability of the last months, for the card of the webcam
+ *
+ * @param	DoliDB	$db			Database
+ * @param	Webcam	$object		Webcam
+ * @param	int		$months		Number of months
+ * @return	string				HTML
+ */
+function webcamsAvailabilityTable($db, $object, $months = 12)
+{
+	global $langs;
+
+	$langs->load('webcams@webcams');
+	$sla = webcamsSla($object);
+	$from = dol_print_date(dol_time_plus_duree(dol_now(), -($months - 1), 'm'), '%Y-%m');
+	$rows = webcamsAvailabilityMonths($db, $object->id, $from);
+
+	$out = load_fiche_titre($langs->trans('WebcamAvailability'), '<span class="opacitymedium small">'.$langs->trans('WebcamAvailabilityLastMonths', $months).'</span>', 'fa-chart-line');
+	$out .= '<div class="div-table-responsive-no-min"><table class="noborder centpercent">';
+	$out .= '<tr class="liste_titre"><th>'.$langs->trans('WebcamAvailabilityPeriod').'</th><th class="right">'.$langs->trans('WebcamAvailabilityPct').'</th>';
+	$out .= '<th class="right">'.$langs->trans('WebcamSlaTargetPct').'</th>';
+	$out .= '<th class="right" title="'.dol_escape_htmltag($langs->trans('WebcamAvailabilityHoursHelp')).'">'.$langs->trans('WebcamAvailabilityHours').'</th>';
+	$out .= '<th class="right">'.$langs->trans('WebcamAvailabilityIncidents').'</th><th class="right">'.$langs->trans('WebcamAvailabilityBreaches').'</th>';
+	$out .= '<th class="center">'.$langs->trans('WebcamAvailabilityFinal').'</th></tr>';
+	foreach ($rows as $row) {
+		$target = ($row->target_pct !== null && $row->target_pct !== '') ? (float) $row->target_pct : $sla['target_pct'];
+		$below = webcamsAvailabilityBelow($row, $target);
+		$pct = webcamsFormatPct($row->availability_pct);
+		if ($below === true) {
+			$pct = dolGetBadge($pct, '', !empty($row->sla_enabled) ? 'danger' : 'warning', '', '', array('attr' => array('title' => $langs->trans(!empty($row->sla_enabled) ? 'WebcamSlaNotMet' : 'WebcamAvailabilityBelow'))));
+		} elseif ($below === false && !empty($row->sla_enabled)) {
+			$pct = dolGetBadge($pct, '', 'success', '', '', array('attr' => array('title' => $langs->trans('WebcamSlaMet'))));
+		}
+		$out .= '<tr class="oddeven">';
+		$out .= '<td class="nowraponall">'.dol_escape_htmltag(webcamsFormatPeriod($row->period)).'</td>';
+		$out .= '<td class="right nowraponall">'.$pct.'</td>';
+		$out .= '<td class="right nowraponall'.(empty($row->sla_enabled) ? ' opacitymedium' : '').'">'.webcamsFormatPct($target).'</td>';
+		$out .= '<td class="right nowraponall">'.((int) $row->available_hours).' / '.((int) $row->expected_hours - (int) $row->excluded_hours);
+		if ((int) $row->excluded_hours) {
+			$out .= ' <span class="opacitymedium">(-'.((int) $row->excluded_hours).')</span>';
+		}
+		$out .= '</td>';
+		$out .= '<td class="right">'.((int) $row->incidents).((float) $row->downtime_hours > 0 ? ' <span class="opacitymedium">('.price((float) $row->downtime_hours, 0, $langs, 0, 0, 1).' h)</span>' : '').'</td>';
+		$out .= '<td class="right">'.((int) $row->response_breaches ? '<span class="error">'.((int) $row->response_breaches).'</span>' : '0').'</td>';
+		$out .= '<td class="center">'.(!empty($row->final) ? img_picto($langs->trans('WebcamAvailabilityFinal'), 'tick') : '<span class="opacitymedium">'.$langs->trans('WebcamAvailabilityProvisional').'</span>').'</td>';
+		$out .= '</tr>';
+	}
+	if (!$rows) {
+		$out .= '<tr><td colspan="7"><span class="opacitymedium">'.$langs->trans('WebcamAvailabilityNone').'</span></td></tr>';
+	}
+	$out .= '</table></div>';
+	return $out;
 }
 
 /**
@@ -247,6 +454,29 @@ function webcamsCardTechRows($object)
 	};
 	$out = '';
 
+	// Availability commitment of the rental contract (sla_*)
+	$sla = webcamsSla($object);
+	$def = function ($k) use ($sla, $langs) {
+		return in_array($k, $sla['defaults']) ? ' <span class="opacitymedium small">('.$langs->trans('Default').')</span>' : '';
+	};
+	if ($sla['enabled']) {
+		$html = dolGetBadge($langs->trans('Yes'), '', 'success').' ';
+		$html .= $langs->trans('WebcamSlaSummary', $sla['offline_hours'], $sla['response_days'], webcamsFormatPct($sla['target_pct']));
+		$html .= $def('offline_hours').$def('response_days').$def('target_pct');
+		$html .= '<br><span class="opacitymedium small">'.$langs->trans('WebcamSlaHours').': '.($sla['hours'] !== '' ? $esc($sla['hours']) : $langs->trans('WebcamSla24h'));
+		$html .= ' - '.$langs->trans('WebcamSlaWeekdays').': '.$esc(webcamsFormatWeekdays($sla['weekdays'])).'</span>';
+	} else {
+		$html = $langs->trans('No');
+	}
+	$out .= $row($langs->trans('WebcamSla'), $html);
+	if ($has($object->availability_period)) {
+		$html = webcamsFormatPct($object->availability_pct);
+		if ($sla['enabled'] && $has($object->availability_pct)) {
+			$html = dolGetBadge($html, '', (float) $object->availability_pct < $sla['target_pct'] ? 'danger' : 'success');
+		}
+		$out .= $row($langs->trans('WebcamAvailabilityLast'), $html.' <span class="opacitymedium">'.$esc(webcamsFormatPeriod($object->availability_period)).'</span>');
+	}
+
 	// Camera counters
 	$shots = webcamsShotsUsed($object);
 	if ($shots !== null) {
@@ -312,4 +542,28 @@ function webcamsCardTechRows($object)
 	$out .= $row($langs->trans('WebcamWindyPublished'), ($windy ? dolGetBadge($langs->trans('Yes'), '', 'success') : $langs->trans('No')).($has($object->windy_id) ? ' <span class="opacitymedium">id '.$esc($object->windy_id).'</span>' : ''));
 
 	return $out;
+}
+
+/**
+ * Days of the commitment for display (lun, mar... or all)
+ *
+ * @param	string	$weekdays	ISO digits 1-7, '' = all
+ * @return	string
+ */
+function webcamsFormatWeekdays($weekdays)
+{
+	global $langs;
+	$langs->load('main');
+	if ($weekdays === '' || $weekdays === '1234567') {
+		return $langs->transnoentitiesnoconv('WebcamSlaAllDays');
+	}
+	// Short names of Dolibarr: ShortMonday... (ISO 1 = Monday)
+	$names = array(1 => 'ShortMonday', 2 => 'ShortTuesday', 3 => 'ShortWednesday', 4 => 'ShortThursday', 5 => 'ShortFriday', 6 => 'ShortSaturday', 7 => 'ShortSunday');
+	$res = array();
+	foreach (str_split($weekdays) as $d) {
+		if (isset($names[(int) $d])) {
+			$res[] = $langs->transnoentitiesnoconv($names[(int) $d]);
+		}
+	}
+	return implode(' ', $res);
 }

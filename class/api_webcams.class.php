@@ -884,13 +884,17 @@ class Webcams extends DolibarrApi
 	 *
 	 * The ticket is linked to the customer of the webcam and to the webcam
 	 * (block "Linked objects" of the card). A second request with the same
-	 * portal_event_id returns the ticket already created.
+	 * portal_event_id returns the ticket already created. With portal_rule, if
+	 * a ticket linked to the webcam for the same rule is still open (status not
+	 * closed or canceled), no ticket is created: the message is added to that
+	 * ticket as a private message and the answer has duplicate = true and
+	 * reason = open_for_rule.
 	 *
 	 * @param	int		$id				ID of webcam
-	 * @param	array	$request_data	{subject, message, type_code, severity_code, category_code, portal_event_id}
+	 * @param	array	$request_data	{subject, message, type_code, severity_code, category_code, portal_event_id, portal_rule, portal_alert_id, due_date}
 	 * @phan-param ?array<string,mixed> $request_data
 	 * @phpstan-param ?array<string,mixed> $request_data
-	 * @return	array	{ok, ticket_id, ticket_ref, duplicate}
+	 * @return	array	{ok, ticket_id, ticket_ref, duplicate, status, reason}
 	 * @phan-return array<string,mixed>
 	 * @phpstan-return array<string,mixed>
 	 *
@@ -905,14 +909,7 @@ class Webcams extends DolibarrApi
 	public function postTickets($id, $request_data = null)
 	{
 		$object = $this->_fetchForPortal($id);
-		if (!isModEnabled('ticket')) {
-			throw new RestException(501, 'Module Ticket is not enabled');
-		}
-		$user = DolibarrApiAccess::$user;
-		if (!$user->hasRight('ticket', 'write')) {
-			throw new RestException(403, 'Permission to create tickets missing');
-		}
-		require_once DOL_DOCUMENT_ROOT.'/ticket/class/ticket.class.php';
+		$user = $this->_checkTicketAccess();
 		$in = is_array($request_data) ? $request_data : array();
 
 		$subject = $this->_inString($in, 'subject', 255);
@@ -924,20 +921,52 @@ class Webcams extends DolibarrApi
 			throw new RestException(400, 'message missing');
 		}
 		$refext = $this->_inPortalEventId($in);
+		$rule = $this->_inString($in, 'portal_rule', 255);
+		if ($rule !== null && (strlen($rule) > 64 || !preg_match('/^[a-z][a-z0-9_]*\.[a-z0-9_.]+$/', $rule))) {
+			throw new RestException(400, 'portal_rule invalid (rule id like enclosure.heater, max 64 characters)');
+		}
+		$alertid = null;
+		if (isset($in['portal_alert_id']) && $in['portal_alert_id'] !== '') {
+			$v = $in['portal_alert_id'];
+			if (is_bool($v) || !is_numeric($v) || (int) $v <= 0 || floor((float) $v) != $v) {
+				throw new RestException(400, 'portal_alert_id invalid');
+			}
+			$alertid = (int) $v;
+		}
+		$due = $this->_inString($in, 'due_date', 10);
+		$duets = 0;
+		if ($due !== null) {
+			if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $due, $m) || !checkdate((int) $m[2], (int) $m[3], (int) $m[1])) {
+				throw new RestException(400, 'due_date invalid (YYYY-MM-DD)');
+			}
+			$duets = dol_mktime(12, 0, 0, (int) $m[2], (int) $m[3], (int) $m[1]);
+		}
+		$html = $this->_ticketHtml($message);
 
 		if ($refext) {
 			// llx_ticket has no ref_ext: the reference is kept in extraparams
-			$sql = "SELECT rowid, ref FROM ".$this->db->prefix()."ticket";
+			$sql = "SELECT rowid, ref, fk_statut FROM ".$this->db->prefix()."ticket";
 			$sql .= " WHERE extraparams LIKE '%".$this->db->escape($this->db->escapeforlike('"ref_ext":"'.$refext.'"'))."%' AND entity IN (".getEntity('ticket').")";
 			$resql = $this->db->query($sql);
 			if ($resql && ($obj = $this->db->fetch_object($resql))) {
-				return array('ok' => true, 'ticket_id' => (int) $obj->rowid, 'ticket_ref' => $obj->ref, 'duplicate' => true);
+				return array('ok' => true, 'ticket_id' => (int) $obj->rowid, 'ticket_ref' => $obj->ref, 'duplicate' => true, 'status' => (int) $obj->fk_statut);
+			}
+		}
+
+		// One open ticket for webcam and rule
+		if ($rule !== null) {
+			$open = $this->_findOpenTicketForRule($object, $rule);
+			if ($open) {
+				if (!$refext || !$this->_findTicketMessage($open->id, $refext)) {
+					$this->_addTicketMessage($open, $html, $refext);
+				}
+				return array('ok' => true, 'ticket_id' => (int) $open->id, 'ticket_ref' => $open->ref, 'duplicate' => true, 'reason' => 'open_for_rule', 'status' => (int) $open->status);
 			}
 		}
 
 		$ticket = new Ticket($this->db);
 		$ticket->subject = $subject;
-		$ticket->message = $message;
+		$ticket->message = $html.$this->_ticketFooter($object, $html, $duets);
 		$ticket->type_code = $this->_dictCode('c_ticket_type', $this->_inString($in, 'type_code', 32));
 		$ticket->severity_code = $this->_dictCode('c_ticket_severity', $this->_inString($in, 'severity_code', 32));
 		$ticket->category_code = $this->_dictCode('c_ticket_category', $this->_inString($in, 'category_code', 32));
@@ -949,14 +978,31 @@ class Webcams extends DolibarrApi
 		$ticket->datec = dol_now();
 		$ticket->context['caller'] = 'webcams';
 
+		$extra = array();
+		if ($refext) {
+			$extra['ref_ext'] = $refext;
+		}
+		if ($rule !== null) {
+			$extra['portal_rule'] = $rule;
+		}
+		if ($alertid !== null) {
+			$extra['portal_alert_id'] = $alertid;
+		}
+		if ($due !== null) {
+			$extra['due_date'] = $due;
+		}
+		// llx_ticket.extraparams is varchar(255) (setExtraParameters cuts at 250)
+		if (strlen((string) json_encode($extra)) > 250) {
+			throw new RestException(400, 'portal_rule, portal_alert_id and due_date too long for the ticket');
+		}
+
 		$this->db->begin();
 		if ($ticket->create($user) <= 0) {
 			$this->db->rollback();
 			throw new RestException(500, 'Error creating ticket', array_merge(array($ticket->error), $ticket->errors));
 		}
-		if ($refext) {
-			$ticket->extraparams = is_array($ticket->extraparams) ? $ticket->extraparams : array();
-			$ticket->extraparams['ref_ext'] = $refext;
+		if ($extra) {
+			$ticket->extraparams = $extra;
 			if ($ticket->setExtraParameters() <= 0) {
 				$this->db->rollback();
 				throw new RestException(500, 'Error saving portal_event_id in ticket', array($ticket->error));
@@ -968,7 +1014,352 @@ class Webcams extends DolibarrApi
 		}
 		$this->db->commit();
 
-		return array('ok' => true, 'ticket_id' => (int) $ticket->id, 'ticket_ref' => $ticket->ref, 'duplicate' => false);
+		return array('ok' => true, 'ticket_id' => (int) $ticket->id, 'ticket_ref' => $ticket->ref, 'duplicate' => false, 'status' => Ticket::STATUS_NOT_READ);
+	}
+
+	/**
+	 * Add a message to a ticket opened by webcam-portal, or close it
+	 *
+	 * Only tickets linked to the webcam and opened by the portal (extraparams
+	 * ref_ext portal:...). The message is added as a private message. With
+	 * close = 1 the ticket is closed only if nobody is working on it (status
+	 * not read or read); otherwise only the message is added and the answer has
+	 * closed = false and close_refused = in_progress. The severity can only be
+	 * raised. A second request with the same portal_event_id adds nothing.
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	int		$ticket_id		ID of ticket
+	 * @param	array	$request_data	{message, close, severity_code, portal_event_id}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, ticket_id, status, closed, duplicate, close_refused}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	PUT {id}/tickets/{ticket_id}
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 409 Ticket already closed or canceled
+	 * @throws RestException 500 System error
+	 * @throws RestException 501 Module Ticket not enabled
+	 */
+	public function putTicket($id, $ticket_id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		$user = $this->_checkTicketAccess();
+		$in = is_array($request_data) ? $request_data : array();
+
+		$ticket = new Ticket($this->db);
+		if ((int) $ticket_id <= 0 || $ticket->fetch((int) $ticket_id) <= 0) {
+			throw new RestException(404, 'Ticket not found');
+		}
+		if (!in_array((int) $ticket->entity, array_map('intval', explode(',', getEntity('ticket'))), true)) {
+			throw new RestException(404, 'Ticket not found');
+		}
+		$extra = is_array($ticket->extraparams) ? $ticket->extraparams : array();
+		if (empty($extra['ref_ext']) || strpos((string) $extra['ref_ext'], 'portal:') !== 0 || !$this->_ticketLinkedToWebcam($ticket->id, $object)) {
+			throw new RestException(403, 'Ticket not opened by webcam-portal for this webcam');
+		}
+
+		$message = isset($in['message']) && !is_array($in['message']) ? trim((string) $in['message']) : '';
+		if ($message === '') {
+			throw new RestException(400, 'message missing');
+		}
+		$close = false;
+		if (array_key_exists('close', $in) && $in['close'] !== null) {
+			if (!in_array($in['close'], array(0, 1, '0', '1', true, false), true)) {
+				throw new RestException(400, 'close must be 0 or 1');
+			}
+			$close = in_array($in['close'], array(1, '1', true), true);
+		}
+		$severity = $this->_inString($in, 'severity_code', 32);
+		$refext = $this->_inPortalEventId($in);
+		$status = (int) $ticket->status;
+
+		// Same portal_event_id: nothing to add (retry after a lost answer)
+		if ($refext && $this->_findTicketMessage($ticket->id, $refext)) {
+			return array('ok' => true, 'ticket_id' => (int) $ticket->id, 'status' => $status, 'closed' => $status == Ticket::STATUS_CLOSED, 'duplicate' => true);
+		}
+		if ($status == Ticket::STATUS_CLOSED || $status == Ticket::STATUS_CANCELED) {
+			throw new RestException(409, 'Ticket already closed or canceled (status '.$status.')');
+		}
+
+		$this->db->begin();
+		$this->_addTicketMessage($ticket, $this->_ticketHtml($message), $refext);
+
+		// Severity: only upwards (position in the dictionary)
+		if ($severity !== null) {
+			$code = $this->_dictCode('c_ticket_severity', $severity);
+			if ($code === $severity && $code !== (string) $ticket->severity_code
+				&& $this->_severityPos($code) > $this->_severityPos((string) $ticket->severity_code)) {
+				$sql = "UPDATE ".$this->db->prefix()."ticket SET severity_code = '".$this->db->escape($code)."' WHERE rowid = ".((int) $ticket->id);
+				if (!$this->db->query($sql)) {
+					$this->db->rollback();
+					throw new RestException(500, 'Error updating severity: '.$this->db->lasterror());
+				}
+				$ticket->severity_code = $code;
+			}
+		}
+
+		$res = array('ok' => true, 'ticket_id' => (int) $ticket->id, 'status' => $status, 'closed' => false, 'duplicate' => false);
+		if ($close) {
+			if ($status == Ticket::STATUS_NOT_READ || $status == Ticket::STATUS_READ) {
+				if ($ticket->close($user) <= 0) {
+					$this->db->rollback();
+					throw new RestException(500, 'Error closing ticket', array_merge(array($ticket->error), $ticket->errors));
+				}
+				$res['status'] = Ticket::STATUS_CLOSED;
+				$res['closed'] = true;
+			} else {
+				// Somebody is working on it: the operator closes it
+				$res['close_refused'] = 'in_progress';
+			}
+		}
+		$this->db->commit();
+
+		return $res;
+	}
+
+	/**
+	 * What webcam-portal reads from Dolibarr for a webcam, in one call
+	 *
+	 * Customer, publication data, availability commitment of the rental
+	 * contract (sla, with the defaults of the setup applied to the empty
+	 * fields), shutter thresholds and links to rttys.
+	 *
+	 * @param	int		$id		ID of webcam
+	 * @return	array	{ok, id, ref, status, customer, portal, sla, shutter, rttys}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	GET {id}/portal
+	 *
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 */
+	public function getPortal($id)
+	{
+		$object = $this->_fetchForPortal($id);
+
+		$customer = null;
+		if ($object->fk_soc > 0) {
+			$sql = "SELECT rowid, nom FROM ".$this->db->prefix()."societe WHERE rowid = ".((int) $object->fk_soc);
+			$resql = $this->db->query($sql);
+			if ($resql && ($obj = $this->db->fetch_object($resql))) {
+				$customer = array('id' => (int) $obj->rowid, 'name' => (string) $obj->nom);
+			}
+		}
+		$sla = webcamsSla($object);
+		unset($sla['defaults']);
+		$used = webcamsShotsUsed($object);
+		$rttys = webcamsRttysUrls($object->ref);
+
+		return array(
+			'ok' => true,
+			'id' => (int) $object->id,
+			'ref' => (string) $object->ref,
+			'status' => (int) $object->status,
+			'customer' => $customer,
+			'portal' => array(
+				'portal_slug' => $object->portal_slug !== '' ? $object->portal_slug : null,
+				'url_current' => $object->url_current !== '' ? $object->url_current : null,
+				'windy_published' => (int) $object->windy_published,
+				'windy_id' => $object->windy_id !== '' ? $object->windy_id : null,
+			),
+			'sla' => $sla,
+			'shutter' => array(
+				'life' => webcamsShutterLife(),
+				'warn_pct' => webcamsShutterWarnPct(),
+				'used' => $used,
+				'level' => webcamsShutterLevel($used),
+			),
+			'rttys' => $rttys ? $rttys : new stdClass(),
+		);
+	}
+
+	/**
+	 * Monthly availability of the webcam, computed by webcam-portal
+	 *
+	 * Inserts or updates the row of the month (fk_webcam, period). A final row
+	 * (final = 1) cannot be changed any more (409: corrections are made by hand
+	 * in Dolibarr). With final = 1 the last availability of the webcam is
+	 * updated (if the month is the most recent) and an event is added in the
+	 * agenda (code AC_WEBCAMS_SLA if the commitment is not met).
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{period, availability_pct, expected_hours, excluded_hours, available_hours, incidents, downtime_hours, response_breaches, sla_enabled, target_pct, sla_met, final}
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, id, period, final, updated, created}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	POST {id}/availability
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 409 Month already final
+	 * @throws RestException 500 System error
+	 */
+	public function postAvailability($id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		$in = is_array($request_data) ? $request_data : array();
+
+		$period = $this->_inPeriod($in, 'period');
+		if ($period === null) {
+			throw new RestException(400, 'period missing (YYYY-MM)');
+		}
+		if (strcmp($period, dol_print_date(dol_now() + 86400, '%Y-%m', 'gmt')) > 0) {
+			throw new RestException(400, 'period in the future');
+		}
+		$bool = function ($k, $default) use ($in) {
+			if (!array_key_exists($k, $in) || $in[$k] === null || $in[$k] === '') {
+				return $default;
+			}
+			if (!in_array($in[$k], array(0, 1, '0', '1', true, false), true)) {
+				throw new RestException(400, $k.' must be 0 or 1');
+			}
+			return in_array($in[$k], array(1, '1', true), true) ? 1 : 0;
+		};
+		$expected = $this->_inNumber($in, 'expected_hours', 0, 744, '', true);
+		if ($expected === null) {
+			throw new RestException(400, 'expected_hours missing');
+		}
+		$excluded = (int) $this->_inNumber($in, 'excluded_hours', 0, 744, '', true);
+		$available = (int) $this->_inNumber($in, 'available_hours', 0, 744, '', true);
+		if ($excluded > $expected || $available > $expected - $excluded) {
+			throw new RestException(400, 'hours not consistent (excluded_hours <= expected_hours, available_hours <= expected_hours - excluded_hours)');
+		}
+		if (array_key_exists('availability_pct', $in)) {
+			$pct = $this->_inNumber($in, 'availability_pct', 0, 100);
+		} else {
+			$pct = ($expected - $excluded) > 0 ? round($available * 100 / ($expected - $excluded), 2) : null;
+		}
+		$incidents = (int) $this->_inNumber($in, 'incidents', 0, 65535, '', true);
+		$downtime = $this->_inNumber($in, 'downtime_hours', 0, 744);
+		$downtime = $downtime === null ? 0.0 : round((float) $downtime, 1);
+		$breaches = (int) $this->_inNumber($in, 'response_breaches', 0, 65535, '', true);
+		$sla = webcamsSla($object);
+		$slaenabled = $bool('sla_enabled', $sla['enabled'] ? 1 : 0);
+		$target = $this->_inNumber($in, 'target_pct', 0, 100);
+		if ($target === null && $slaenabled) {
+			$target = $sla['target_pct'];
+		}
+		$slamet = $bool('sla_met', null);
+		if (!$slaenabled) {
+			$slamet = null;
+		} elseif ($slamet === null && $pct !== null) {
+			$slamet = ($pct >= $target && $breaches == 0) ? 1 : 0;
+		}
+		$final = $bool('final', 0);
+
+		$table = $this->db->prefix().'webcams_availability';
+		$sql = "SELECT rowid, final FROM ".$table." WHERE fk_webcam = ".((int) $object->id)." AND period = '".$this->db->escape($period)."'";
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			throw new RestException(500, 'Error reading availability: '.$this->db->lasterror());
+		}
+		$row = $this->db->fetch_object($resql);
+		if ($row && (int) $row->final) {
+			throw new RestException(409, 'Availability of '.$period.' already final');
+		}
+
+		$num = function ($v) {
+			return $v === null ? 'NULL' : (string) $v;
+		};
+		$values = array(
+			'fk_soc' => $object->fk_soc > 0 ? (string) ((int) $object->fk_soc) : 'NULL',
+			'availability_pct' => $num($pct),
+			'expected_hours' => (string) ((int) $expected),
+			'excluded_hours' => (string) $excluded,
+			'available_hours' => (string) $available,
+			'incidents' => (string) $incidents,
+			'downtime_hours' => (string) $downtime,
+			'response_breaches' => (string) $breaches,
+			'sla_enabled' => (string) $slaenabled,
+			'target_pct' => $num($target),
+			'sla_met' => $num($slamet),
+			'final' => (string) $final,
+		);
+		$this->db->begin();
+		if ($row) {
+			$parts = array();
+			foreach ($values as $k => $v) {
+				$parts[] = $k.' = '.$v;
+			}
+			$sql = "UPDATE ".$table." SET ".implode(', ', $parts)." WHERE rowid = ".((int) $row->rowid);
+		} else {
+			$sql = "INSERT INTO ".$table." (entity, fk_webcam, period, ".implode(', ', array_keys($values)).", date_creation)";
+			$sql .= " VALUES (".((int) (empty($object->entity) ? 1 : $object->entity)).", ".((int) $object->id).", '".$this->db->escape($period)."', ".implode(', ', $values).", '".$this->db->idate(dol_now())."')";
+		}
+		if (!$this->db->query($sql)) {
+			$this->db->rollback();
+			throw new RestException(500, 'Error saving availability: '.$this->db->lasterror());
+		}
+
+		if ($final) {
+			if ((string) $object->availability_period === '' || strcmp($period, (string) $object->availability_period) >= 0) {
+				$this->_updateColumns($object, array('availability_pct' => $pct === null ? null : (float) $pct, 'availability_period' => $period));
+			}
+			$text = $this->_trans('WebcamEventAvailability', webcamsFormatPeriod($period), $pct === null ? $this->_trans('WebcamAvailabilityNoHours') : webcamsFormatPct($pct));
+			if ($slaenabled) {
+				$text .= ' ('.$this->_trans($slamet === 0 ? 'WebcamEventSlaNotMet' : ($slamet === 1 ? 'WebcamEventSlaMet' : 'WebcamEventSlaUnknown'), webcamsFormatPct($target)).')';
+			}
+			$note = $text."\n".$this->_trans('WebcamAvailabilityEventNote', $available, $expected - $excluded, $excluded, $incidents, $breaches);
+			$this->_addEvent($object, $text, ($slaenabled && $slamet === 0) ? 'AC_WEBCAMS_SLA' : 'AC_WEBCAMS_PORTAL', 0, '', $note);
+		}
+		$this->db->commit();
+
+		return array('ok' => true, 'id' => (int) $object->id, 'period' => $period, 'final' => (bool) $final, 'updated' => (bool) $row, 'created' => !$row);
+	}
+
+	/**
+	 * Monthly availability registered for the webcam (from - to, oldest first)
+	 *
+	 * @param	int		$id		ID of webcam
+	 * @param	string	$from	First month YYYY-MM (optional)
+	 * @param	string	$to		Last month YYYY-MM (optional)
+	 * @return	array	{ok, id, months: [...]}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	GET {id}/availability
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 */
+	public function getAvailability($id, $from = '', $to = '')
+	{
+		$object = $this->_fetchForPortal($id);
+		$from = $this->_inPeriod(array('from' => $from), 'from');
+		$to = $this->_inPeriod(array('to' => $to), 'to');
+		if ($from !== null && $to !== null && strcmp($from, $to) > 0) {
+			throw new RestException(400, 'from after to');
+		}
+		$months = array();
+		foreach (array_reverse(webcamsAvailabilityMonths($this->db, $object->id, (string) $from, (string) $to)) as $r) {
+			$months[] = array(
+				'period' => (string) $r->period,
+				'availability_pct' => $r->availability_pct === null ? null : (float) $r->availability_pct,
+				'expected_hours' => (int) $r->expected_hours,
+				'excluded_hours' => (int) $r->excluded_hours,
+				'available_hours' => (int) $r->available_hours,
+				'incidents' => (int) $r->incidents,
+				'downtime_hours' => (float) $r->downtime_hours,
+				'response_breaches' => (int) $r->response_breaches,
+				'sla_enabled' => (int) $r->sla_enabled,
+				'target_pct' => $r->target_pct === null ? null : (float) $r->target_pct,
+				'sla_met' => $r->sla_met === null ? null : (int) $r->sla_met,
+				'final' => (int) $r->final,
+				'customer_id' => $r->fk_soc === null ? null : (int) $r->fk_soc,
+			);
+		}
+		return array('ok' => true, 'id' => (int) $object->id, 'months' => $months);
 	}
 
 	/**
@@ -1260,7 +1651,7 @@ class Webcams extends DolibarrApi
 		$now = webcamsShotsUsed((object) $after);
 		if ($now !== null) {
 			$life = webcamsShutterLife();
-			$warn = (int) floor($life * getDolGlobalInt('WEBCAMS_SHUTTER_WARN_PCT', 90) / 100);
+			$warn = webcamsShutterWarnShots();
 			if ($changed) {
 				$before = null;
 			}
@@ -1431,13 +1822,16 @@ class Webcams extends DolibarrApi
 	 * @param	string	$key	Key
 	 * @param	mixed	$p1		Parameter 1
 	 * @param	mixed	$p2		Parameter 2
+	 * @param	mixed	$p3		Parameter 3
+	 * @param	mixed	$p4		Parameter 4
+	 * @param	mixed	$p5		Parameter 5
 	 * @return	string
 	 */
-	private function _trans($key, $p1 = '', $p2 = '')
+	private function _trans($key, $p1 = '', $p2 = '', $p3 = '', $p4 = '', $p5 = '')
 	{
 		global $langs;
 		$langs->load('webcams@webcams');
-		return $langs->transnoentitiesnoconv($key, $p1, $p2);
+		return $langs->transnoentitiesnoconv($key, $p1, $p2, $p3, $p4, $p5);
 	}
 
 	/**
@@ -1539,6 +1933,262 @@ class Webcams extends DolibarrApi
 			throw new RestException(400, 'portal_event_id invalid');
 		}
 		return 'portal:'.((int) $v);
+	}
+
+	/**
+	 * Check that the module Ticket is on and the user can write tickets
+	 *
+	 * @return	User
+	 *
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 501 Module Ticket not enabled
+	 */
+	private function _checkTicketAccess()
+	{
+		if (!isModEnabled('ticket')) {
+			throw new RestException(501, 'Module Ticket is not enabled');
+		}
+		$user = DolibarrApiAccess::$user;
+		if (!$user->hasRight('ticket', 'write')) {
+			throw new RestException(403, 'Permission to create tickets missing');
+		}
+		require_once DOL_DOCUMENT_ROOT.'/ticket/class/ticket.class.php';
+		return $user;
+	}
+
+	/**
+	 * SQL condition: ticket t linked to the webcam, in both directions of llx_element_element
+	 *
+	 * @param	Webcam	$object		Webcam
+	 * @return	string
+	 */
+	private function _sqlTicketLinked($object)
+	{
+		$type = $this->db->escape($object->getElementType());
+		$sql = "EXISTS (SELECT 1 FROM ".$this->db->prefix()."element_element as ee WHERE";
+		$sql .= " (ee.sourcetype = 'ticket' AND ee.fk_source = t.rowid AND ee.targettype = '".$type."' AND ee.fk_target = ".((int) $object->id).")";
+		$sql .= " OR (ee.targettype = 'ticket' AND ee.fk_target = t.rowid AND ee.sourcetype = '".$type."' AND ee.fk_source = ".((int) $object->id)."))";
+		return $sql;
+	}
+
+	/**
+	 * Whether a ticket is linked to the webcam
+	 *
+	 * @param	int		$ticketid	Id of ticket
+	 * @param	Webcam	$object		Webcam
+	 * @return	bool
+	 */
+	private function _ticketLinkedToWebcam($ticketid, $object)
+	{
+		$sql = "SELECT t.rowid FROM ".$this->db->prefix()."ticket as t WHERE t.rowid = ".((int) $ticketid)." AND ".$this->_sqlTicketLinked($object);
+		$resql = $this->db->query($sql);
+		return $resql && $this->db->fetch_object($resql);
+	}
+
+	/**
+	 * Open ticket (status not closed or canceled) linked to the webcam for a rule of the portal
+	 *
+	 * @param	Webcam	$object		Webcam
+	 * @param	string	$rule		Id of the rule (extraparams portal_rule)
+	 * @return	Ticket|null
+	 */
+	private function _findOpenTicketForRule($object, $rule)
+	{
+		$sql = "SELECT t.rowid, t.extraparams FROM ".$this->db->prefix()."ticket as t";
+		$sql .= " WHERE t.entity IN (".getEntity('ticket').") AND t.fk_statut NOT IN (".Ticket::STATUS_CLOSED.", ".Ticket::STATUS_CANCELED.")";
+		$sql .= " AND t.extraparams LIKE '%".$this->db->escape($this->db->escapeforlike('"portal_rule":'.json_encode($rule)))."%'";
+		$sql .= " AND ".$this->_sqlTicketLinked($object);
+		$sql .= " ORDER BY t.rowid DESC";
+		$resql = $this->db->query($sql);
+		while ($resql && ($obj = $this->db->fetch_object($resql))) {
+			$extra = json_decode((string) $obj->extraparams, true);
+			if (is_array($extra) && isset($extra['portal_rule']) && $extra['portal_rule'] === $rule) {
+				$ticket = new Ticket($this->db);
+				if ($ticket->fetch((int) $obj->rowid) > 0) {
+					return $ticket;
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Message of the ticket already added with this portal_event_id
+	 *
+	 * @param	int		$ticketid	Id of ticket
+	 * @param	string	$refext		portal:<id>
+	 * @return	int					Id of the event of the message or 0
+	 */
+	private function _findTicketMessage($ticketid, $refext)
+	{
+		$sql = "SELECT id FROM ".$this->db->prefix()."actioncomm";
+		$sql .= " WHERE elementtype = 'ticket' AND fk_element = ".((int) $ticketid)." AND ref_ext = '".$this->db->escape($refext)."'";
+		$resql = $this->db->query($sql);
+		if ($resql && ($obj = $this->db->fetch_object($resql))) {
+			return (int) $obj->id;
+		}
+		return 0;
+	}
+
+	/**
+	 * Add a private message to a ticket, as "Add a private message" of the card
+	 * (event TICKET_MSG_PRIVATE), with ref_ext = portal:<id> for idempotency.
+	 * No email is sent.
+	 *
+	 * @param	Ticket	$ticket		Ticket
+	 * @param	string	$html		Message (HTML)
+	 * @param	string	$refext		portal:<id> or ''
+	 * @return	int					Id of the event
+	 *
+	 * @throws RestException 500 System error
+	 */
+	private function _addTicketMessage($ticket, $html, $refext)
+	{
+		require_once DOL_DOCUMENT_ROOT.'/comm/action/class/actioncomm.class.php';
+		$user = DolibarrApiAccess::$user;
+		$ac = new ActionComm($this->db);
+		$ac->type_code = 'AC_OTH_AUTO';
+		$ac->code = 'TICKET_MSG_PRIVATE';
+		$ac->label = dol_trunc((string) $ticket->subject, 255, 'right', 'UTF-8', 1);
+		$ac->note_private = $html;
+		$ac->socid = $ticket->socid > 0 ? (int) $ticket->socid : 0;
+		$ac->fk_project = $ticket->fk_project > 0 ? (int) $ticket->fk_project : 0;
+		$ac->userownerid = $user->id;
+		$ac->userassigned = array($user->id => array('id' => $user->id, 'transparency' => 0));
+		$ac->datep = dol_now();
+		$ac->percentage = -1;
+		$ac->elementtype = 'ticket';
+		$ac->fk_element = $ticket->id;
+		$ac->elementid = $ticket->id;
+		if ($refext) {
+			$ac->ref_ext = $refext;
+		}
+		$res = $ac->create($user);
+		if ($res <= 0) {
+			throw new RestException(500, 'Error adding message to ticket', array_merge(array($ac->error), $ac->errors));
+		}
+		return $res;
+	}
+
+	/**
+	 * Position of a severity in the dictionary of tickets (higher = more severe)
+	 *
+	 * @param	string	$code	Code of severity
+	 * @return	int				-1 if unknown
+	 */
+	private function _severityPos($code)
+	{
+		if ($code === '') {
+			return -1;
+		}
+		$sql = "SELECT pos FROM ".$this->db->prefix()."c_ticket_severity WHERE code = '".$this->db->escape($code)."' AND entity IN (".getEntity('c_ticket_severity').")";
+		$resql = $this->db->query($sql);
+		if ($resql && ($obj = $this->db->fetch_object($resql))) {
+			return (int) $obj->pos;
+		}
+		return -1;
+	}
+
+	/**
+	 * Message of the portal as HTML: plain text with new lines is escaped and
+	 * converted, HTML is kept as it is
+	 *
+	 * @param	string	$message	Message
+	 * @return	string
+	 */
+	private function _ticketHtml($message)
+	{
+		if (dol_textishtml($message)) {
+			return $message;
+		}
+		return dol_nl2br(dol_escape_htmltag($message, 0, 1));
+	}
+
+	/**
+	 * Data of the webcam and links (Dolibarr, portal, rttys) at the end of the
+	 * text of a new ticket. Links already in the message are not repeated. No
+	 * token, password or public IP.
+	 *
+	 * @param	Webcam	$object		Webcam
+	 * @param	string	$html		Message of the ticket
+	 * @param	int		$duets		Due date of the intervention (0 = none)
+	 * @return	string				HTML
+	 */
+	private function _ticketFooter($object, $html, $duets)
+	{
+		global $langs;
+		$langs->load('webcams@webcams');
+		$lines = array();
+		$add = function ($label, $value) use (&$lines) {
+			if ($value !== null && $value !== '') {
+				$lines[] = dol_escape_htmltag($label).': '.$value;
+			}
+		};
+		$link = function ($url) use ($html) {
+			return strpos($html, $url) === false && strpos($html, dol_escape_htmltag($url)) === false ? '<a href="'.dol_escape_htmltag($url).'">'.dol_escape_htmltag($url).'</a>' : '';
+		};
+		$date = function ($v) {
+			return $v ? dol_print_date($v, 'dayhour', 'tzserver') : '';
+		};
+		$add($langs->transnoentitiesnoconv('Webcam'), dol_escape_htmltag($object->ref.($object->label ? ' - '.$object->label : '')));
+		if ($object->fk_soc > 0) {
+			$sql = "SELECT nom FROM ".$this->db->prefix()."societe WHERE rowid = ".((int) $object->fk_soc);
+			$resql = $this->db->query($sql);
+			if ($resql && ($obj = $this->db->fetch_object($resql))) {
+				$add($langs->transnoentitiesnoconv('Customer'), dol_escape_htmltag($obj->nom));
+			}
+		}
+		$add($langs->transnoentitiesnoconv('WebcamLocation'), dol_escape_htmltag((string) $object->location));
+		$add($langs->transnoentitiesnoconv('WebcamLastContact'), $date($object->last_contact));
+		$add($langs->transnoentitiesnoconv('WebcamLastCapture'), $date($object->last_capture));
+		$add($langs->transnoentitiesnoconv('WebcamLastTelemetry'), $date($object->last_telemetry));
+		if ($object->battery_v !== null && $object->battery_v !== '') {
+			$add($langs->transnoentitiesnoconv('WebcamBatteryV'), price((float) $object->battery_v, 0, $langs, 0, 0, 2).($object->battery_v_min24 !== null && $object->battery_v_min24 !== '' ? ' (min 24 h '.price((float) $object->battery_v_min24, 0, $langs, 0, 0, 2).')' : ''));
+		}
+		$sla = webcamsSla($object);
+		if ($sla['enabled']) {
+			$add($langs->transnoentitiesnoconv('WebcamSla'), dol_escape_htmltag($langs->transnoentitiesnoconv('WebcamSlaSummary', $sla['offline_hours'], $sla['response_days'], webcamsFormatPct($sla['target_pct']))));
+		}
+		if ($duets) {
+			$d = dol_print_date($duets, 'day', 'tzserver');
+			if (strpos($html, $d) === false) {
+				$add($langs->transnoentitiesnoconv('WebcamTicketDue'), $d);
+			}
+		}
+		$add($langs->transnoentitiesnoconv('WebcamTicketCard'), $link(dol_buildpath('/webcams/webcam_card.php', 2).'?id='.((int) $object->id)));
+		$urls = webcamsPortalUrls($object);
+		if (!empty($urls['page'])) {
+			$add($langs->transnoentitiesnoconv('WebcamPortalPage'), $link($urls['page']));
+		}
+		if (!empty($urls['current'])) {
+			$add('current.jpg', $link($urls['current']));
+		}
+		$rttys = webcamsRttysUrls($object->ref);
+		if ($rttys) {
+			$add($langs->transnoentitiesnoconv('WebcamRemoteTerminal').' (rttys)', $link($rttys['terminal']));
+			$add($langs->transnoentitiesnoconv('WebcamRemoteLuci').' (rttys)', $link($rttys['luci']));
+		}
+		return '<br><br>--<br>'.implode('<br>', $lines);
+	}
+
+	/**
+	 * Month YYYY-MM from the request, null if missing
+	 *
+	 * @param	array<string,mixed>	$in		Request
+	 * @param	string				$k		Key
+	 * @return	string|null
+	 *
+	 * @throws RestException 400 Bad request
+	 */
+	private function _inPeriod($in, $k)
+	{
+		if (!isset($in[$k]) || $in[$k] === '') {
+			return null;
+		}
+		if (!is_string($in[$k]) || !preg_match('/^(19|20)\d{2}-(0[1-9]|1[0-2])$/', $in[$k])) {
+			throw new RestException(400, $k.' invalid (YYYY-MM)');
+		}
+		return $in[$k];
 	}
 
 	/* END API V2 (webcam-portal) */
