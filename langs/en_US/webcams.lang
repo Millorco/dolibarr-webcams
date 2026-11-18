@@ -122,3 +122,52 @@ WEBCAMS_RTTYS_URLTooltip = E.g. https://remote.viewlapse.com: the Remote termina
 WebcamsDbToUpgrade = The database of the module is not up to date with version %s (new columns missing).
 WebcamsDbUpgrade = Upgrade database
 WebcamsDbUpgraded = Database upgraded
+# 1.3: availability commitment, ticket per rule, availability register
+WebcamSla = Availability commitment
+WebcamSlaEnabled = Availability commitment active
+WebcamSlaEnabledHelp = Rental contract with a response commitment and a minimum monthly availability. Empty fields below use the defaults of the module setup
+WebcamSlaOfflineHours = Hours without photos before intervention
+WebcamSlaOfflineHoursHelp = N: hours without photos (within the expected shooting hours) after which the response commitment starts. Empty = default of the setup (3)
+WebcamSlaResponseDays = Days to intervene
+WebcamSlaResponseDaysHelp = X: calendar days to intervene. Empty = default of the setup (3)
+WebcamSlaTargetPct = Minimum availability (%)
+WebcamSlaTargetPctHelp = Monthly availability promised to the customer. Empty = default of the setup (98)
+WebcamSlaHours = Expected shooting hours
+WebcamSlaHoursHelp = Local time HH:MM-HH:MM (e.g. 07:00-19:00 for a building site). Empty = 24 hours
+WebcamSlaWeekdays = Expected days
+WebcamSlaWeekdaysHelp = ISO digits, 1 = Monday ... 7 = Sunday (e.g. 12345 Monday to Friday). Empty = every day
+WebcamSlaSummary = intervention after %s h without photos, within %s days, minimum availability %s
+WebcamSlaInvalid = Availability commitment not valid:
+WebcamSla24h = 24 hours
+WebcamSlaAllDays = every day
+WebcamSlaMet = Commitment met
+WebcamSlaNotMet = Commitment not met
+WebcamAvailability = Availability
+WebcamAvailabilityPct = Availability
+WebcamAvailabilityPeriod = Month
+WebcamAvailabilityLast = Last monthly availability
+WebcamAvailabilityLastMonths = last %s months
+WebcamAvailabilityHours = Hours with photos / useful
+WebcamAvailabilityHoursHelp = Available hours (at least one photo) over expected hours minus excluded ones (maintenance, interventions, force majeure); excluded hours in brackets
+WebcamAvailabilityIncidents = Incidents
+WebcamAvailabilityBreaches = Late interventions
+WebcamAvailabilityFinal = Final
+WebcamAvailabilityProvisional = provisional
+WebcamAvailabilityNone = No month recorded by the portal
+WebcamAvailabilityBelow = Below the threshold
+WebcamAvailabilityNoHours = n/a (no useful hours)
+WebcamEventAvailability = Availability %s: %s
+WebcamEventSlaMet = commitment %s: met
+WebcamEventSlaNotMet = commitment %s: NOT met
+WebcamEventSlaUnknown = commitment %s: not assessable
+WebcamAvailabilityEventNote = Hours with photos %s of %s useful (%s excluded), incidents %s, late interventions %s
+WebcamTicketDue = Intervention by
+WebcamTicketCard = Card in Dolibarr
+WebcamsBelowSla = Below threshold (%s)
+WebcamsAvailabilityMonth = Availability of the month: webcams below the contract commitment
+WebcamsAvailabilityAllOk = All %s webcams with an availability commitment recorded in the month are above the threshold
+WebcamsAvailabilityNoData = No availability of webcams with a commitment recorded by the portal for this month
+WEBCAMS_SLA_OFFLINE_HOURS = Hours without photos before intervention (default)
+WEBCAMS_SLA_RESPONSE_DAYS = Days to intervene (default)
+WEBCAMS_SLA_TARGET_PCT = Minimum monthly availability (%), default
+WEBCAMS_SLA_DEFAULTSTooltip = Value used for webcams with the availability commitment active and the field empty on the card; the portal reads it with GET webcams/{id}/portal

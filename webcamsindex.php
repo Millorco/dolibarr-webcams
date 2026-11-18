@@ -127,8 +127,36 @@ if (!$resql) {
 	exit;
 }
 
+// Availability of the month (register written by webcam-portal): webcams below the threshold
+$period = GETPOST('period', 'aZ09');
+if (!preg_match('/^(19|20)\d{2}-(0[1-9]|1[0-2])$/', $period)) {
+	$period = dol_print_date(dol_time_plus_duree($now, -1, 'm'), '%Y-%m');
+}
+$below = array();
+$sql = "SELECT a.fk_webcam, a.period, a.availability_pct, a.expected_hours, a.excluded_hours, a.available_hours, a.incidents, a.downtime_hours,";
+$sql .= " a.response_breaches, a.sla_enabled, a.target_pct, a.sla_met, a.final, a.fk_soc,";
+$sql .= " t.ref, t.label, t.hostname, t.status, t.sla_enabled as w_sla_enabled, t.sla_target_pct, s.nom as socname";
+$sql .= " FROM ".$db->prefix()."webcams_availability as a";
+$sql .= " INNER JOIN ".$db->prefix()."webcams_webcam as t ON t.rowid = a.fk_webcam";
+$sql .= " LEFT JOIN ".$db->prefix()."societe as s ON s.rowid = a.fk_soc";
+$sql .= " WHERE a.period = '".$db->escape($period)."' AND t.entity IN (".getEntity('webcam').")";
+$sql .= " ORDER BY a.availability_pct ASC, t.ref";
+$resqlav = $db->query($sql);
+$nbperiod = 0;
+while ($resqlav && ($obj = $db->fetch_object($resqlav))) {
+	if (empty($obj->sla_enabled)) {
+		continue; // Only webcams with the availability commitment in that month
+	}
+	$nbperiod++;
+	$target = ($obj->target_pct !== null && $obj->target_pct !== '') ? (float) $obj->target_pct : webcamsSla((object) array('sla_target_pct' => $obj->sla_target_pct))['target_pct'];
+	$obj->target = $target;
+	if (webcamsAvailabilityBelow($obj, $target) === true) {
+		$below[(int) $obj->fk_webcam] = $obj;
+	}
+}
+
 $rows = array();
-$stats = array('total' => 0, 'ok' => 0, 'offline' => 0, 'outdated' => 0, 'nocustomer' => 0, 'shutter' => 0, 'noportal' => 0);
+$stats = array('total' => 0, 'ok' => 0, 'offline' => 0, 'outdated' => 0, 'nocustomer' => 0, 'shutter' => 0, 'noportal' => 0, 'belowsla' => count($below));
 while ($obj = $db->fetch_object($resql)) {
 	if ((int) $obj->status === Webcam::STATUS_CANCELED) {
 		continue;
@@ -165,6 +193,8 @@ while ($obj = $db->fetch_object($resql)) {
 		$keep = (bool) $obj->shutterlevel;
 	} elseif ($filter === 'noportal') {
 		$keep = $obj->noportal;
+	} elseif ($filter === 'belowsla') {
+		$keep = isset($below[(int) $obj->rowid]);
 	}
 	if ($keep) {
 		$rows[] = $obj;
@@ -196,8 +226,49 @@ print $tile($langs->trans('WebcamsShutterNearEnd'), $stats['shutter'], $base.'?f
 if ($useportal) {
 	print $tile($langs->trans('WebcamsNoPortal'), $stats['noportal'], $base.'?filter=noportal', $stats['noportal'] ? '#b42318' : 'inherit');
 }
+print $tile($langs->trans('WebcamsBelowSla', webcamsFormatPeriod($period)), $stats['belowsla'], $base.'?filter=belowsla&period='.urlencode($period), $stats['belowsla'] ? '#b42318' : 'inherit');
 print $tile($langs->trans('Customers'), $customers, DOL_URL_ROOT.'/societe/list.php?type=c', 'inherit');
 print '</div>';
+
+// Webcams below the availability threshold in the month
+$prev = dol_print_date(dol_time_plus_duree(dol_mktime(12, 0, 0, (int) substr($period, 5, 2), 15, (int) substr($period, 0, 4)), -1, 'm'), '%Y-%m');
+$next = dol_print_date(dol_time_plus_duree(dol_mktime(12, 0, 0, (int) substr($period, 5, 2), 15, (int) substr($period, 0, 4)), 1, 'm'), '%Y-%m');
+$nav = '<a href="'.$base.'?period='.urlencode($prev).($filter ? '&filter='.urlencode($filter) : '').'">'.img_previous().'</a> ';
+$nav .= '<span class="marginleftonly marginrightonly">'.dol_escape_htmltag(webcamsFormatPeriod($period)).'</span>';
+if (strcmp($next, dol_print_date($now, '%Y-%m')) <= 0) {
+	$nav .= ' <a href="'.$base.'?period='.urlencode($next).($filter ? '&filter='.urlencode($filter) : '').'">'.img_next().'</a>';
+}
+print load_fiche_titre($langs->trans('WebcamsAvailabilityMonth'), $nav, 'fa-chart-line');
+print '<div class="div-table-responsive-no-min"><table class="noborder centpercent">';
+print '<tr class="liste_titre"><th>'.$langs->trans('Webcam').'</th><th>'.$langs->trans('Customer').'</th><th class="right">'.$langs->trans('WebcamAvailabilityPct').'</th>';
+print '<th class="right">'.$langs->trans('WebcamSlaTargetPct').'</th><th class="right">'.$langs->trans('WebcamAvailabilityHours').'</th>';
+print '<th class="right">'.$langs->trans('WebcamAvailabilityIncidents').'</th><th class="right">'.$langs->trans('WebcamAvailabilityBreaches').'</th><th class="center">'.$langs->trans('WebcamAvailabilityFinal').'</th></tr>';
+$webcam = new Webcam($db);
+$soc = new Societe($db);
+foreach ($below as $obj) {
+	$webcam->id = $obj->fk_webcam;
+	$webcam->ref = $obj->ref;
+	$webcam->label = $obj->label ? $obj->label : $obj->hostname;
+	$webcam->status = $obj->status;
+	print '<tr class="oddeven"><td class="tdoverflowmax250">'.$webcam->getNomUrl(1).' '.dol_escape_htmltag($webcam->label).'</td>';
+	if ($obj->fk_soc) {
+		$soc->id = $obj->fk_soc;
+		$soc->name = $obj->socname;
+		print '<td class="tdoverflowmax200">'.$soc->getNomUrl(1).'</td>';
+	} else {
+		print '<td class="opacitymedium">-</td>';
+	}
+	print '<td class="right">'.dolGetBadge(webcamsFormatPct($obj->availability_pct), '', 'danger').'</td>';
+	print '<td class="right'.(empty($obj->sla_enabled) ? ' opacitymedium' : '').'">'.webcamsFormatPct($obj->target).'</td>';
+	print '<td class="right nowraponall">'.((int) $obj->available_hours).' / '.((int) $obj->expected_hours - (int) $obj->excluded_hours).'</td>';
+	print '<td class="right">'.((int) $obj->incidents).'</td>';
+	print '<td class="right">'.((int) $obj->response_breaches ? '<span class="error">'.((int) $obj->response_breaches).'</span>' : '0').'</td>';
+	print '<td class="center">'.(!empty($obj->final) ? img_picto($langs->trans('WebcamAvailabilityFinal'), 'tick') : '<span class="opacitymedium">'.$langs->trans('WebcamAvailabilityProvisional').'</span>').'</td></tr>';
+}
+if (!$below) {
+	print '<tr><td colspan="8"><span class="opacitymedium">'.$langs->trans($nbperiod ? 'WebcamsAvailabilityAllOk' : 'WebcamsAvailabilityNoData', $nbperiod).'</span></td></tr>';
+}
+print '</table></div><br>';
 
 print '<div class="div-table-responsive-no-min"><table class="noborder centpercent">';
 print '<tr class="liste_titre"><th>'.$langs->trans('Status').'</th><th>'.$langs->trans('Webcam').'</th><th>'.$langs->trans('Customer').'</th>';

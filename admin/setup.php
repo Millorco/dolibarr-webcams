@@ -146,6 +146,33 @@ $item->fieldAttr['placeholder'] = 'https://remote.viewlapse.com';
 $item->helpText = $langs->transnoentities('WEBCAMS_RTTYS_URLTooltip');
 $item->cssClass = 'minwidth500';
 
+$formSetup->newItem('WebcamSla')->setAsTitle();
+
+$item = $formSetup->newItem('WEBCAMS_SLA_OFFLINE_HOURS');
+$item->defaultFieldValue = '3';
+$item->fieldAttr['type'] = 'number';
+$item->fieldAttr['min'] = '1';
+$item->fieldAttr['max'] = '720';
+$item->helpText = $langs->transnoentities('WEBCAMS_SLA_DEFAULTSTooltip');
+$item->cssClass = 'maxwidth100';
+
+$item = $formSetup->newItem('WEBCAMS_SLA_RESPONSE_DAYS');
+$item->defaultFieldValue = '3';
+$item->fieldAttr['type'] = 'number';
+$item->fieldAttr['min'] = '1';
+$item->fieldAttr['max'] = '90';
+$item->helpText = $langs->transnoentities('WEBCAMS_SLA_DEFAULTSTooltip');
+$item->cssClass = 'maxwidth100';
+
+$item = $formSetup->newItem('WEBCAMS_SLA_TARGET_PCT');
+$item->defaultFieldValue = '98';
+$item->fieldAttr['type'] = 'number';
+$item->fieldAttr['min'] = '1';
+$item->fieldAttr['max'] = '100';
+$item->fieldAttr['step'] = '0.01';
+$item->helpText = $langs->transnoentities('WEBCAMS_SLA_DEFAULTSTooltip');
+$item->cssClass = 'maxwidth100';
+
 // End of definition of parameters
 
 
@@ -178,7 +205,13 @@ include DOL_DOCUMENT_ROOT.'/core/actions_setmoduleoptions.inc.php';
 
 // Database not upgraded (module updated without disabling and enabling it again)
 $dbtoupgrade = false;
-$resql = $db->query("SHOW COLUMNS FROM ".$db->prefix()."webcams_webcam LIKE 'last_telemetry'");
+foreach (array('last_telemetry', 'sla_enabled', 'availability_period') as $col) {
+	$resql = $db->query("SHOW COLUMNS FROM ".$db->prefix()."webcams_webcam LIKE '".$db->escape($col)."'");
+	if ($resql && !$db->num_rows($resql)) {
+		$dbtoupgrade = true;
+	}
+}
+$resql = $db->query("SHOW TABLES LIKE '".$db->escape($db->prefix())."webcams_availability'");
 if ($resql && !$db->num_rows($resql)) {
 	$dbtoupgrade = true;
 }

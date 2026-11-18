@@ -122,3 +122,52 @@ WEBCAMS_RTTYS_URLTooltip = Es. https://remote.viewlapse.com: il pulsante Termina
 WebcamsDbToUpgrade = Il database del modulo non è aggiornato alla versione %s (mancano le colonne nuove).
 WebcamsDbUpgrade = Aggiorna il database
 WebcamsDbUpgraded = Database aggiornato
+# 1.3: impegno di disponibilità, ticket per regola, registro della disponibilità
+WebcamSla = Impegno di disponibilità
+WebcamSlaEnabled = Impegno di disponibilità attivo
+WebcamSlaEnabledHelp = Contratto di noleggio con impegno di intervento e disponibilità mensile minima. I campi vuoti qui sotto usano i valori predefiniti delle impostazioni del modulo
+WebcamSlaOfflineHours = Ore senza foto prima dell'intervento
+WebcamSlaOfflineHoursHelp = N: ore senza foto (nelle ore di scatto previste) dopo le quali scatta l'impegno di intervento. Vuoto = valore predefinito delle impostazioni (3)
+WebcamSlaResponseDays = Giorni per l'intervento
+WebcamSlaResponseDaysHelp = X: giorni di calendario entro cui intervenire. Vuoto = valore predefinito delle impostazioni (3)
+WebcamSlaTargetPct = Disponibilità minima (%)
+WebcamSlaTargetPctHelp = Disponibilità mensile promessa al cliente. Vuoto = valore predefinito delle impostazioni (98)
+WebcamSlaHours = Ore di scatto previste
+WebcamSlaHoursHelp = Ora locale HH:MM-HH:MM (es. 07:00-19:00 per un cantiere). Vuoto = 24 ore
+WebcamSlaWeekdays = Giorni previsti
+WebcamSlaWeekdaysHelp = Cifre ISO, 1 = lunedì ... 7 = domenica (es. 12345 dal lunedì al venerdì). Vuoto = tutti i giorni
+WebcamSlaSummary = intervento dopo %s h senza foto, entro %s giorni, disponibilità minima %s
+WebcamSlaInvalid = Impegno di disponibilità non valido:
+WebcamSla24h = 24 ore
+WebcamSlaAllDays = tutti i giorni
+WebcamSlaMet = Impegno rispettato
+WebcamSlaNotMet = Impegno non rispettato
+WebcamAvailability = Disponibilità
+WebcamAvailabilityPct = Disponibilità
+WebcamAvailabilityPeriod = Mese
+WebcamAvailabilityLast = Ultima disponibilità mensile
+WebcamAvailabilityLastMonths = ultimi %s mesi
+WebcamAvailabilityHours = Ore con foto / utili
+WebcamAvailabilityHoursHelp = Ore disponibili (con almeno una foto) sulle ore previste meno quelle escluse (manutenzione, interventi, forza maggiore); tra parentesi le ore escluse
+WebcamAvailabilityIncidents = Incidenti
+WebcamAvailabilityBreaches = Interventi in ritardo
+WebcamAvailabilityFinal = Definitivo
+WebcamAvailabilityProvisional = provvisorio
+WebcamAvailabilityNone = Nessun mese registrato dal portal
+WebcamAvailabilityBelow = Sotto la soglia
+WebcamAvailabilityNoHours = n.d. (nessuna ora utile)
+WebcamEventAvailability = Disponibilità %s: %s
+WebcamEventSlaMet = impegno %s: rispettato
+WebcamEventSlaNotMet = impegno %s: NON rispettato
+WebcamEventSlaUnknown = impegno %s: non valutabile
+WebcamAvailabilityEventNote = Ore con foto %s su %s utili (%s escluse), incidenti %s, interventi in ritardo %s
+WebcamTicketDue = Intervento entro
+WebcamTicketCard = Scheda in Dolibarr
+WebcamsBelowSla = Sotto soglia (%s)
+WebcamsAvailabilityMonth = Disponibilità del mese: webcam sotto l'impegno del contratto
+WebcamsAvailabilityAllOk = Tutte le %s webcam con impegno di disponibilità registrate nel mese sono sopra la soglia
+WebcamsAvailabilityNoData = Nessuna disponibilità di webcam con impegno registrata dal portal per questo mese
+WEBCAMS_SLA_OFFLINE_HOURS = Ore senza foto prima dell'intervento (predefinito)
+WEBCAMS_SLA_RESPONSE_DAYS = Giorni per l'intervento (predefinito)
+WEBCAMS_SLA_TARGET_PCT = Disponibilità mensile minima (%), predefinita
+WEBCAMS_SLA_DEFAULTSTooltip = Valore usato per le webcam con l'impegno di disponibilità attivo e il campo vuoto nella scheda; il portal lo legge con GET webcams/{id}/portal

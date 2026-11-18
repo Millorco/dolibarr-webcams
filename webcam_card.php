@@ -462,7 +462,9 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 	// Counters, Victron and portal are shown below with their own layout
 	$customfields = array('shutter_count', 'shots_total', 'camera_hours', 'camera_power_cycles', 'counters_date',
 		'battery_v', 'battery_v_min24', 'battery_soc', 'charge_state', 'solar_wh_yesterday', 'victron_error', 'victron_date',
-		'portal_slug', 'url_current', 'windy_published', 'windy_id');
+		'portal_slug', 'url_current', 'windy_published', 'windy_id',
+		'sla_enabled', 'sla_offline_hours', 'sla_response_days', 'sla_target_pct', 'sla_hours', 'sla_weekdays',
+		'availability_pct', 'availability_period');
 	$savedfields = $object->fields;
 	foreach ($customfields as $k) {
 		unset($object->fields[$k]);
@@ -654,6 +656,9 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 		}
 
 		print '</div><div class="fichehalfright">';
+
+		// Availability of the last 12 months (register written by webcam-portal)
+		print webcamsAvailabilityTable($db, $object, 12);
 
 		// BEGIN MODULEBUILDER TAB AGENDA
 		$MAXEVENT = 10;
