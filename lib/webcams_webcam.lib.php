@@ -23,6 +23,7 @@
  */
 
 require_once __DIR__.'/webcams_compat.lib.php';
+require_once __DIR__.'/webcams_plan.lib.php';
 
 /**
  * Prepare array of tabs for Webcam
@@ -103,6 +104,20 @@ function webcamPrepareHead($object)
 		$h++;
 	}
 	// END MODULEBUILDER TAB DOCUMENT
+
+	// Register of the fingerprints (O2, 1.4): days deposited by webcam-portal
+	$nbreg = 0;
+	$resql = $db->query("SELECT COUNT(*) as nb FROM ".$db->prefix()."webcams_register WHERE fk_webcam = ".((int) $object->id));
+	if ($resql && ($o = $db->fetch_object($resql))) {
+		$nbreg = (int) $o->nb;
+	}
+	$head[$h][0] = dolBuildUrl(dol_buildpath("/webcams/webcam_register.php", 1), ['id' => $object->id]);
+	$head[$h][1] = $langs->trans('WebcamRegister');
+	if ($nbreg > 0) {
+		$head[$h][1] .= '<span class="badge marginleftonlyshort">'.$nbreg.'</span>';
+	}
+	$head[$h][2] = 'register';
+	$h++;
 
 	// BEGIN MODULEBUILDER TAB AGENDA
 	if ($showtabofpageagenda) {
@@ -566,4 +581,196 @@ function webcamsFormatWeekdays($weekdays)
 		}
 	}
 	return implode(' ', $res);
+}
+
+/**
+ * Rows of the card with the price list and the options (block "Listino e servizi")
+ *
+ * @param	DoliDB	$db			Database
+ * @param	Webcam	$object		Webcam
+ * @return	string				HTML (rows of a table with 2 columns)
+ */
+function webcamsCardPlanRows($db, $object)
+{
+	global $langs;
+
+	$langs->load('webcams@webcams');
+	$row = function ($label, $html) {
+		return '<tr><td class="titlefield">'.$label.'</td><td>'.$html.'</td></tr>'."\n";
+	};
+	$esc = function ($v) {
+		return dol_escape_htmltag((string) $v);
+	};
+	$day = function ($v) {
+		$d = webcamsDateYmd($v);
+		return $d === null ? '' : dol_print_date(dol_stringtotime($d.' 12:00:00', 0), 'day');
+	};
+	$po = webcamsPlanOptions($db, $object);
+	$plan = $po['plan'];
+	$opt = $po['options'];
+	$out = '';
+
+	$colors = array('base' => 'secondary', 'standard' => 'info', 'pro' => 'success');
+	$html = dolGetBadge($langs->trans('WebcamPlan'.ucfirst($plan['level'])), '', $colors[$plan['level']]);
+	if ($plan['note'] !== '') {
+		$html .= ' <span class="opacitymedium">'.$esc($plan['note']).'</span>';
+	}
+	$out .= $row($langs->trans('WebcamPlanLevel'), $html);
+	if ($plan['rental_start'] || $plan['rental_end']) {
+		$out .= $row($langs->trans('WebcamRental'), ($plan['rental_start'] ? $day($object->rental_start) : '...').' - '.($plan['rental_end'] ? $day($object->rental_end) : '...'));
+	}
+
+	// Sponsor (M12)
+	$features = webcamsFeatures($object);
+	$s = $opt['sponsor'];
+	if ($s['enabled'] || $plan['level'] == 'pro') {
+		$html = $features['sponsor']['on'] ? dolGetBadge($langs->trans('WebcamFeatureOn'), '', 'success') : dolGetBadge($langs->trans('WebcamSponsorOutOfPeriod'), '', 'warning');
+		$html .= ' '.$langs->trans('WebcamSponsorSlotsN', $s['slots']);
+		if ($s['start'] || $s['end']) {
+			$html .= ' <span class="opacitymedium">('.($s['start'] ? $day($object->sponsor_start) : '...').' - '.($s['end'] ? $day($object->sponsor_end) : '...').')</span>';
+		}
+		if (!$s['enabled']) {
+			$html .= ' <span class="opacitymedium small">('.$langs->trans('WebcamIncludedInPro').')</span>';
+		}
+	} else {
+		$html = $langs->trans('No');
+	}
+	$out .= $row($langs->trans('WebcamSponsor'), $html);
+
+	// Bad weather certificate (O2)
+	$html = $features['weather_cert']['on'] ? dolGetBadge($langs->trans('Yes'), '', 'success').($opt['weather_cert'] ? '' : ' <span class="opacitymedium small">('.$langs->trans('WebcamIncludedInPro').')</span>') : $langs->trans('No');
+	$out .= $row($langs->trans('WebcamOptWeatherCert'), $html);
+
+	// Final film (M10)
+	$f = $opt['film'];
+	if ($f['option'] !== '') {
+		$html = dolGetBadge($langs->trans($f['option'] == 'edited' ? 'WebcamFilmEdited' : 'WebcamFilmAuto'), '', 'info');
+		$html .= ' '.$langs->trans($f['format'] == 'both' ? 'WebcamFilmBoth' : ($f['format'] == 'portrait' ? 'WebcamFilmPortrait' : 'WebcamFilmLandscape')).', '.$langs->trans('WebcamFilmSeconds', $f['duration_s']);
+	} else {
+		$html = $langs->trans('No');
+	}
+	if ($f['status'] !== '') {
+		$st = array('queued' => 'secondary', 'ready' => 'warning', 'delivered' => 'success');
+		$html .= '<br>'.dolGetBadge($langs->trans('WebcamFilm'.ucfirst($f['status'])), '', isset($st[$f['status']]) ? $st[$f['status']] : 'secondary');
+		if ($f['url'] !== '') {
+			$html .= ' <a href="'.$esc($f['url']).'" target="_blank" rel="noopener">'.img_picto('', 'globe', 'class="pictofixedwidth"').$langs->trans('WebcamFilmUrl').'</a>';
+		}
+	}
+	$out .= $row($langs->trans('WebcamFilmOption'), $html);
+
+	// Monthly report (O3)
+	$r = $opt['report'];
+	if (!$features['monthly_report']['on']) {
+		$html = '<span class="opacitymedium">'.$langs->trans('WebcamNotInPlan').'</span>';
+	} elseif (!$r['enabled']) {
+		$html = $langs->trans('WebcamReportNoEmail');
+	} elseif ($r['recipients']) {
+		$html = img_picto('', 'email', 'class="pictofixedwidth"').$esc(implode(', ', $r['recipients']));
+		if ((string) $object->report_email === '') {
+			$html .= ' <span class="opacitymedium small">('.$langs->trans('WebcamReportEmailOfThirdparty').')</span>';
+		}
+	} else {
+		$html = dolGetBadge($langs->trans('WebcamReportNoRecipient'), '', 'warning');
+	}
+	$out .= $row($langs->trans('WebcamReport'), $html);
+
+	return $out;
+}
+
+/**
+ * Matrix level -> features, read only, with the column of this webcam
+ *
+ * @param	Webcam	$object		Webcam
+ * @return	string				HTML
+ */
+function webcamsFeatureTable($object)
+{
+	global $langs;
+
+	$langs->load('webcams@webcams');
+	$level = webcamsPlanLevel($object->plan_level);
+	$features = webcamsFeatures($object);
+	$out = load_fiche_titre($langs->trans('WebcamFeatures'), '<span class="opacitymedium small">'.$langs->trans('WebcamFeaturesHelp').'</span>', 'fa-list-check');
+	$out .= '<div class="div-table-responsive-no-min"><table class="noborder centpercent">';
+	$out .= '<tr class="liste_titre"><th>'.$langs->trans('WebcamFeature').'</th>';
+	foreach (array('base', 'standard', 'pro') as $l) {
+		$out .= '<th class="center'.($l == $level ? ' badge-status4' : '').'">'.$langs->trans('WebcamPlan'.ucfirst($l)).'</th>';
+	}
+	$out .= '<th>'.$langs->trans('WebcamFeatureOption').'</th><th class="center">'.$langs->trans('WebcamFeatureThisWebcam').'</th></tr>';
+	$optlabels = array('sponsor_enabled' => 'WebcamSponsorEnabled', 'opt_weather_cert' => 'WebcamOptWeatherCert', 'film_option' => 'WebcamFilmOption');
+	foreach (webcamsFeatureMatrix() as $id => $f) {
+		$out .= '<tr class="oddeven"><td>'.$langs->trans('WebcamFeature_'.$id).' <span class="opacitymedium small">'.$id.'</span></td>';
+		foreach (array('base', 'standard', 'pro') as $l) {
+			$out .= '<td class="center">'.(in_array($l, $f['levels'], true) ? img_picto('', 'tick') : '').'</td>';
+		}
+		$out .= '<td class="small">'.($f['option'] ? $langs->trans($optlabels[$f['option']]) : '').'</td>';
+		$st = $features[$id];
+		if ($st['on']) {
+			$cell = dolGetBadge($langs->trans('WebcamFeatureOn'), '', 'success').($st['by'] == 'option' ? ' <span class="opacitymedium small">('.$langs->trans('WebcamFeatureByOption').')</span>' : '');
+		} elseif ($st['by'] == 'period') {
+			$cell = dolGetBadge($langs->trans('WebcamSponsorOutOfPeriod'), '', 'warning');
+		} else {
+			$cell = '<span class="opacitymedium">-</span>';
+		}
+		$out .= '<td class="center nowraponall">'.$cell.'</td></tr>';
+	}
+	$out .= '</table></div>';
+	return $out;
+}
+
+/**
+ * Head of the list of documents of the services (type and period from
+ * ecm_files.keywords = webcams:<doc_type>:<period>)
+ *
+ * @param	DoliDB	$db			Database
+ * @param	Webcam	$object		Webcam
+ * @param	string	$reldir		Directory relative to DOL_DATA_ROOT (filepath of ecm_files)
+ * @param	string	$doctype	Filter ('' = all)
+ * @return	string				HTML
+ */
+function webcamsServiceDocumentsTable($db, $object, $reldir, $doctype = '')
+{
+	global $langs;
+
+	$langs->load('webcams@webcams');
+	$types = array('monthly_report', 'weather_certificate', 'weather_register', 'other');
+	$sql = "SELECT rowid, filename, filepath, keywords, description, date_c, share FROM ".$db->prefix()."ecm_files";
+	$sql .= " WHERE filepath = '".$db->escape($reldir)."' AND keywords LIKE 'webcams:%'";
+	if ($doctype !== '' && in_array($doctype, $types, true)) {
+		$sql .= " AND keywords LIKE '".$db->escape('webcams:'.$doctype)."%'";
+	}
+	$sql .= " AND entity IN (".getEntity('ecmfiles').")";
+	$sql .= " ORDER BY keywords DESC, filename";
+	$resql = $db->query($sql);
+
+	$filter = '<form method="GET" action="'.$_SERVER['PHP_SELF'].'" class="inline-block">';
+	$filter .= '<input type="hidden" name="id" value="'.((int) $object->id).'">';
+	$filter .= '<select name="doctype" class="flat" onchange="this.form.submit()">';
+	$filter .= '<option value="">'.$langs->trans('WebcamDocTypeAll').'</option>';
+	foreach ($types as $t) {
+		$filter .= '<option value="'.$t.'"'.($doctype === $t ? ' selected' : '').'>'.$langs->trans('WebcamDocType_'.$t).'</option>';
+	}
+	$filter .= '</select> <noscript><input type="submit" class="button small" value="'.$langs->trans('Refresh').'"></noscript></form>';
+
+	$out = load_fiche_titre($langs->trans('WebcamServiceDocuments'), $filter, 'fa-file-pdf');
+	$out .= '<div class="div-table-responsive-no-min"><table class="noborder centpercent">';
+	$out .= '<tr class="liste_titre"><th>'.$langs->trans('WebcamDocType').'</th><th>'.$langs->trans('WebcamAvailabilityPeriod').'</th><th>'.$langs->trans('File').'</th><th>'.$langs->trans('Description').'</th><th class="center">'.$langs->trans('DateCreation').'</th></tr>';
+	$n = 0;
+	while ($resql && ($obj = $db->fetch_object($resql))) {
+		$k = explode(':', (string) $obj->keywords, 3);
+		$t = isset($k[1]) ? $k[1] : '';
+		$p = isset($k[2]) ? $k[2] : '';
+		$url = DOL_URL_ROOT.'/document.php?modulepart=webcams&file='.urlencode('webcam/'.dol_sanitizeFileName($object->ref).'/'.$obj->filename);
+		$out .= '<tr class="oddeven"><td>'.dol_escape_htmltag(in_array($t, $types, true) ? $langs->trans('WebcamDocType_'.$t) : $t).'</td>';
+		$out .= '<td class="nowraponall">'.dol_escape_htmltag($p !== '' ? webcamsFormatDocPeriod($p) : '').'</td>';
+		$out .= '<td><a href="'.dol_escape_htmltag($url).'" target="_blank">'.img_mime($obj->filename, '', 'pictofixedwidth').dol_escape_htmltag($obj->filename).'</a></td>';
+		$out .= '<td>'.dol_escape_htmltag((string) $obj->description).'</td>';
+		$out .= '<td class="center nowraponall">'.dol_print_date($db->jdate($obj->date_c), 'dayhour', 'tzuserrel').'</td></tr>';
+		$n++;
+	}
+	if (!$n) {
+		$out .= '<tr><td colspan="5"><span class="opacitymedium">'.$langs->trans('WebcamServiceDocumentsNone').'</span></td></tr>';
+	}
+	$out .= '</table></div>';
+	return $out;
 }

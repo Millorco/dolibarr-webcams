@@ -173,6 +173,24 @@ $item->fieldAttr['step'] = '0.01';
 $item->helpText = $langs->transnoentities('WEBCAMS_SLA_DEFAULTSTooltip');
 $item->cssClass = 'maxwidth100';
 
+$formSetup->newItem('WebcamEmailSetup')->setAsTitle();
+
+dol_include_once('/webcams/lib/webcams_plan.lib.php');
+$emailtemplates = array('' => '') + webcamsEmailTemplates($db);
+
+$item = $formSetup->newItem('WEBCAMS_EMAIL_TEMPLATE_REPORT');
+$item->setAsSelect($emailtemplates);
+$item->helpText = $langs->transnoentities('WEBCAMS_EMAIL_TEMPLATETooltip');
+
+$item = $formSetup->newItem('WEBCAMS_EMAIL_TEMPLATE_WEATHER');
+$item->setAsSelect($emailtemplates);
+$item->helpText = $langs->transnoentities('WEBCAMS_EMAIL_TEMPLATETooltip');
+
+$item = $formSetup->newItem('WEBCAMS_EMAIL_FROM');
+$item->fieldAttr['placeholder'] = getDolGlobalString('MAIN_MAIL_EMAIL_FROM');
+$item->helpText = $langs->transnoentities('WEBCAMS_EMAIL_FROMTooltip');
+$item->cssClass = 'minwidth300';
+
 // End of definition of parameters
 
 
@@ -205,15 +223,17 @@ include DOL_DOCUMENT_ROOT.'/core/actions_setmoduleoptions.inc.php';
 
 // Database not upgraded (module updated without disabling and enabling it again)
 $dbtoupgrade = false;
-foreach (array('last_telemetry', 'sla_enabled', 'availability_period') as $col) {
+foreach (array('last_telemetry', 'sla_enabled', 'availability_period', 'plan_level', 'report_email') as $col) {
 	$resql = $db->query("SHOW COLUMNS FROM ".$db->prefix()."webcams_webcam LIKE '".$db->escape($col)."'");
 	if ($resql && !$db->num_rows($resql)) {
 		$dbtoupgrade = true;
 	}
 }
-$resql = $db->query("SHOW TABLES LIKE '".$db->escape($db->prefix())."webcams_availability'");
-if ($resql && !$db->num_rows($resql)) {
-	$dbtoupgrade = true;
+foreach (array('webcams_availability', 'webcams_archive', 'webcams_register') as $tbl) {
+	$resql = $db->query("SHOW TABLES LIKE '".$db->escape($db->prefix().$tbl)."'");
+	if ($resql && !$db->num_rows($resql)) {
+		$dbtoupgrade = true;
+	}
 }
 if ($action == 'upgradedb' && $dbtoupgrade) {
 	require_once dol_buildpath('/webcams/core/modules/modWebcams.class.php', 0);
