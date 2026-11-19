@@ -26,6 +26,7 @@
 // Put here all includes required by your class file
 require_once DOL_DOCUMENT_ROOT.'/core/class/commonobject.class.php';
 require_once __DIR__.'/../lib/webcams_compat.lib.php';
+require_once __DIR__.'/../lib/webcams_plan.lib.php';
 //require_once DOL_DOCUMENT_ROOT . '/societe/class/societe.class.php';
 //require_once DOL_DOCUMENT_ROOT . '/product/class/product.class.php';
 
@@ -152,6 +153,22 @@ class Webcam extends CommonObject
 		'sla_weekdays' => array('type' => 'varchar(7)', 'label' => 'WebcamSlaWeekdays', 'enabled' => 1, 'position' => 85, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth100', 'placeholder' => '12345', 'help' => 'WebcamSlaWeekdaysHelp', 'lang' => 'webcams@webcams'),
 		'availability_pct' => array('type' => 'double(5,2)', 'label' => 'WebcamAvailabilityPct', 'enabled' => 1, 'position' => 88, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'isameasure' => 2, 'lang' => 'webcams@webcams'),
 		'availability_period' => array('type' => 'varchar(7)', 'label' => 'WebcamAvailabilityPeriod', 'enabled' => 1, 'position' => 89, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'plan_level' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('base' => 'WebcamPlanBase', 'standard' => 'WebcamPlanStandard', 'pro' => 'WebcamPlanPro'), 'label' => 'WebcamPlanLevel', 'enabled' => 1, 'position' => 90, 'notnull' => 1, 'default' => 'base', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamPlanLevelHelp', 'lang' => 'webcams@webcams'),
+		'plan_note' => array('type' => 'varchar(255)', 'label' => 'WebcamPlanNote', 'enabled' => 1, 'position' => 91, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'placeholder' => 'offerta 2026-118', 'lang' => 'webcams@webcams'),
+		'rental_start' => array('type' => 'date', 'label' => 'WebcamRentalStart', 'enabled' => 1, 'position' => 92, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'rental_end' => array('type' => 'date', 'label' => 'WebcamRentalEnd', 'enabled' => 1, 'position' => 93, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamRentalEndHelp', 'lang' => 'webcams@webcams'),
+		'sponsor_enabled' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamSponsorEnabled', 'enabled' => 1, 'position' => 94, 'notnull' => 1, 'default' => '0', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamSponsorEnabledHelp', 'lang' => 'webcams@webcams'),
+		'sponsor_slots' => array('type' => 'integer', 'label' => 'WebcamSponsorSlots', 'enabled' => 1, 'position' => 95, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'placeholder' => '2', 'help' => 'WebcamSponsorSlotsHelp', 'lang' => 'webcams@webcams'),
+		'sponsor_start' => array('type' => 'date', 'label' => 'WebcamSponsorStart', 'enabled' => 1, 'position' => 96, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'sponsor_end' => array('type' => 'date', 'label' => 'WebcamSponsorEnd', 'enabled' => 1, 'position' => 97, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'opt_weather_cert' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamOptWeatherCert', 'enabled' => 1, 'position' => 98, 'notnull' => 1, 'default' => '0', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamOptWeatherCertHelp', 'lang' => 'webcams@webcams'),
+		'film_option' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('auto' => 'WebcamFilmAuto', 'edited' => 'WebcamFilmEdited'), 'label' => 'WebcamFilmOption', 'enabled' => 1, 'position' => 99, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamFilmOptionHelp', 'lang' => 'webcams@webcams'),
+		'film_format' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('landscape' => 'WebcamFilmLandscape', 'portrait' => 'WebcamFilmPortrait', 'both' => 'WebcamFilmBoth'), 'label' => 'WebcamFilmFormat', 'enabled' => 1, 'position' => 100, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'film_duration' => array('type' => 'integer', 'label' => 'WebcamFilmDuration', 'enabled' => 1, 'position' => 101, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'placeholder' => '60', 'lang' => 'webcams@webcams'),
+		'film_status' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('queued' => 'WebcamFilmQueued', 'ready' => 'WebcamFilmReady', 'delivered' => 'WebcamFilmDelivered'), 'label' => 'WebcamFilmStatus', 'enabled' => 1, 'position' => 102, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'film_url' => array('type' => 'url', 'label' => 'WebcamFilmUrl', 'enabled' => 1, 'position' => 103, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'report_enabled' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamReportEnabled', 'enabled' => 1, 'position' => 104, 'notnull' => 1, 'default' => '1', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamReportEnabledHelp', 'lang' => 'webcams@webcams'),
+		'report_email' => array('type' => 'varchar(255)', 'label' => 'WebcamReportEmail', 'enabled' => 1, 'position' => 105, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'minwidth300', 'help' => 'WebcamReportEmailHelp', 'lang' => 'webcams@webcams'),
 		'note_public' => array('type' => 'html', 'label' => 'NotePublic', 'enabled' => 1, 'position' => 70, 'notnull' => 0, 'visible' => 0, 'cssview' => 'wordbreak'),
 		'note_private' => array('type' => 'html', 'label' => 'NotePrivate', 'enabled' => 1, 'position' => 71, 'notnull' => 0, 'visible' => 0, 'cssview' => 'wordbreak'),
 		'last_contact' => array('type' => 'datetime', 'label' => 'WebcamLastContact', 'enabled' => 1, 'position' => 100, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
@@ -350,6 +367,38 @@ class Webcam extends CommonObject
 	/** @var mixed */
 	public $availability_period;
 	/** @var mixed */
+	public $plan_level;
+	/** @var mixed */
+	public $plan_note;
+	/** @var mixed */
+	public $rental_start;
+	/** @var mixed */
+	public $rental_end;
+	/** @var mixed */
+	public $sponsor_enabled;
+	/** @var mixed */
+	public $sponsor_slots;
+	/** @var mixed */
+	public $sponsor_start;
+	/** @var mixed */
+	public $sponsor_end;
+	/** @var mixed */
+	public $opt_weather_cert;
+	/** @var mixed */
+	public $film_option;
+	/** @var mixed */
+	public $film_format;
+	/** @var mixed */
+	public $film_duration;
+	/** @var mixed */
+	public $film_status;
+	/** @var mixed */
+	public $film_url;
+	/** @var mixed */
+	public $report_enabled;
+	/** @var mixed */
+	public $report_email;
+	/** @var mixed */
 	public $last_photo;
 	/** @var mixed */
 	public $first_contact;
@@ -394,14 +443,14 @@ class Webcam extends CommonObject
 	/**
 	 * @var array<array<string>|string>		List of child tables. To test if we can delete object.
 	 */
-	protected $childtables = array();
+	protected $childtables = array('webcams_register' => array('name' => 'WebcamRegister', 'fk_element' => 'fk_webcam'));
 
 	/**
 	 * @var string[]	List of child tables. To know object to delete on cascade.
 	 *               	If name matches '@ClassNAme:FilePathClass;ParentFkFieldName' it will
 	 *               	call method deleteByParentField(parentId, ParentFkFieldName) to fetch and delete child object
 	 */
-	protected $childtablesoncascade = array('webcams_availability');
+	protected $childtablesoncascade = array('webcams_availability', 'webcams_archive');
 
 	/**
 	 * @var WebcamLine[]     Array of subtable lines
@@ -462,7 +511,7 @@ class Webcam extends CommonObject
 	 */
 	public function create(User $user, $notrigger = 0)
 	{
-		if ($this->checkSla() < 0) {
+		if ($this->checkSla() < 0 || $this->checkPlan() < 0) {
 			return -1;
 		}
 		$result = $this->createCommon($user, $notrigger);
@@ -702,7 +751,7 @@ class Webcam extends CommonObject
 	 */
 	public function update(User $user, $notrigger = 0)
 	{
-		if ($this->checkSla() < 0) {
+		if ($this->checkSla() < 0 || $this->checkPlan() < 0) {
 			return -1;
 		}
 		return $this->updateCommon($user, $notrigger);
@@ -758,6 +807,69 @@ class Webcam extends CommonObject
 		if ($err) {
 			// Only error (not errors): the card shows both
 			$this->error = $langs->transnoentities('WebcamSlaInvalid').' '.implode('; ', $err);
+			return -1;
+		}
+		return 1;
+	}
+
+	/**
+	 * Check and normalize the fields of the price list and of the options
+	 * (plan_level, sponsor_*, film_*, report_*, rental_*), as the contract API
+	 * Dolibarr 2.2 (module 1.4) describes them.
+	 *
+	 * @return	int<-1,1>		1 if OK, -1 if a value is not valid (message in error)
+	 */
+	public function checkPlan()
+	{
+		global $langs;
+
+		$langs->load('webcams@webcams');
+		$err = array();
+		$empty = function ($v) {
+			return $v === null || $v === '';
+		};
+		$this->plan_level = webcamsPlanLevel($this->plan_level);
+		$this->sponsor_enabled = empty($this->sponsor_enabled) ? 0 : 1;
+		$this->opt_weather_cert = empty($this->opt_weather_cert) ? 0 : 1;
+		$this->report_enabled = ($this->report_enabled === null || $this->report_enabled === '' || !empty($this->report_enabled)) ? 1 : 0;
+		if (!$empty($this->sponsor_slots) && (!is_numeric($this->sponsor_slots) || (int) $this->sponsor_slots < 1 || (int) $this->sponsor_slots > 20 || floor((float) $this->sponsor_slots) != $this->sponsor_slots)) {
+			$err[] = $langs->transnoentities('WebcamSponsorSlots').': 1-20';
+		}
+		if (!$empty($this->film_duration) && (!is_numeric($this->film_duration) || (int) $this->film_duration < 5 || (int) $this->film_duration > 3600)) {
+			$err[] = $langs->transnoentities('WebcamFilmDuration').': 5-3600';
+		}
+		if ($empty($this->film_option) || $this->film_option === '0') {
+			$this->film_option = null;
+		} elseif (!in_array($this->film_option, array('auto', 'edited'), true)) {
+			$err[] = $langs->transnoentities('WebcamFilmOption').': auto, edited';
+		}
+		if ($empty($this->film_format) || $this->film_format === '0') {
+			$this->film_format = null;
+		} elseif (!in_array($this->film_format, array('landscape', 'portrait', 'both'), true)) {
+			$err[] = $langs->transnoentities('WebcamFilmFormat').': landscape, portrait, both';
+		}
+		foreach (array(array('rental_start', 'rental_end', 'WebcamRentalEnd'), array('sponsor_start', 'sponsor_end', 'WebcamSponsorEnd')) as $p) {
+			$a = $this->{$p[0]};
+			$b = $this->{$p[1]};
+			if (!$empty($a) && !$empty($b) && (int) $b < (int) $a) {
+				$err[] = $langs->transnoentities($p[2]).': '.$langs->transnoentities('WebcamDateBeforeStart');
+			}
+		}
+		if (!$empty($this->report_email)) {
+			$list = array();
+			foreach (preg_split('/[,;\s]+/', (string) $this->report_email) as $e) {
+				if ($e === '') {
+					continue;
+				}
+				if (!isValidEmail($e)) {
+					$err[] = $langs->transnoentities('WebcamReportEmail').': '.$e;
+				}
+				$list[] = $e;
+			}
+			$this->report_email = $list ? implode(', ', $list) : null;
+		}
+		if ($err) {
+			$this->error = $langs->transnoentities('WebcamPlanInvalid').' '.implode('; ', $err);
 			return -1;
 		}
 		return 1;
