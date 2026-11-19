@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4
+
+Contratto 1.3 di Webcam 2.0 (API Dolibarr 2.2): servizi che si vendono.
+
+- **Listino e opzioni** sulla webcam, modificabili dalla scheda (blocco *Listino e servizi*): livello `plan_level` (`base`, `standard`, `pro`), `plan_note`, periodo del noleggio (`rental_start`, `rental_end`), pacchetto sponsor (`sponsor_enabled`, `sponsor_slots`, `sponsor_start`, `sponsor_end`), certificato delle giornate di maltempo (`opt_weather_cert`), filmato finale (`film_option`, `film_format`, `film_duration`; `film_status` e `film_url` scritti dal portal), rapporto mensile per email (`report_enabled`, `report_email`), controllati al salvataggio. Script `sql/update_1.3-1.4.sql`, che funziona partendo da qualsiasi versione precedente.
+- **Matrice livello → funzioni** del contratto in sola lettura sotto la scheda, con le funzioni attive per la webcam (sponsor solo nel periodo).
+- **Archivi dopo il noleggio** (M13): tabella `llx_webcams_archive` e riquadro nella scheda per aggiungere ed eliminare le righe; quando cambia il cliente la scheda propone la riga per il cliente precedente con la fine del noleggio a oggi.
+- **Registro delle impronte** (O2): tabella `llx_webcams_register`, immutabile (nessun aggiornamento, nessuna colonna `tms`); scheda *Registro* in sola lettura con classificazione, hash, controllo della catena e ora del deposito. Una webcam con registro non si può eliminare.
+- API: `GET {id}/portal` con `plan`, `options` (destinatari del rapporto controllati, predefiniti applicati) e `archives`; `PUT {id}/portal` con `film_status` (`queued`, `ready`; un `delivered` salvato non si sovrascrive, `ignored`) e `film_url`, evento "Filmato finale pronto"; `POST {id}/documents` con `doc_type`, `period` (in `ecm_files.keywords` = `webcams:<tipo>:<periodo>`), `portal_doc_id` e `send_email`; nuovi `POST` e `GET {id}/register` (`created`, `duplicate`, `conflict` con evento `AC_WEBCAMS_REGISTER`).
+- **Email al cliente** con i modelli di Dolibarr: tipo di modello *Webcam* (`webcams_webcam`) in *Impostazioni → Email → Modelli email*, due modelli creati all'attivazione ("Rapporto mensile webcam", "Certificato giornate di maltempo"), sostituzioni `__WEBCAM_REF__`, `__WEBCAM_LABEL__`, `__WEBCAM_PERIOD__`, `__WEBCAM_LINK__`, invio con `CMailFile` e PDF allegato, evento `AC_WEBCAMS_SENTBYMAIL` con `ref_ext` = `portal:<portal_doc_id>` (idempotenza, `resend` per rimandare), evento per l'operatore se l'email non parte (`no_recipient`, `template_missing`, `mail_error`). Impostazioni `WEBCAMS_EMAIL_TEMPLATE_REPORT`, `WEBCAMS_EMAIL_TEMPLATE_WEATHER`, `WEBCAMS_EMAIL_FROM`. Anche *Invia email* della scheda propone questi modelli.
+- Scheda *Documenti*: elenco dei rapporti e certificati del portal con tipo e periodo, filtro per tipo.
+- Pulsante **Filmato consegnato** sulla scheda quando il portal ha segnato il filmato pronto (evento `AC_WEBCAMS_FILM`).
+- Nessun permesso nuovo: il portal usa **Webcam → Sincronizzare dal portal** (51730014).
+
 ## 1.3
 
 Contratto 1.1 di Webcam 2.0 (API Dolibarr 2.1): assistenza automatica del portal.

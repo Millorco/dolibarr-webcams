@@ -7,7 +7,8 @@ Modulo per [Dolibarr ERP/CRM](https://www.dolibarr.org) (versione 20 o più rece
 - **Scheda Webcam nel cliente**: in ogni soggetto terzo, l'elenco delle sue webcam e il pulsante per aggiungerne una.
 - **Elenco webcam** con filtri, colonne a scelta ed export di Dolibarr.
 - **API** `POST /api/index.php/webcams/report`: riceve il JSON di `inventory_report`, riconosce la webcam dal MAC, la crea la prima volta e poi aggiorna solo i dati tecnici. I dati inseriti a mano non vengono mai toccati.
-- **API per webcam-portal** (dalla 1.2): contatori, Victron, dati di pubblicazione, eventi, ticket, interventi e PDF; dalla 1.3 soglie del contratto, aggiornamento e chiusura dei ticket, registro della disponibilità (vedi *API per webcam-portal* sotto).
+- **API per webcam-portal** (dalla 1.2): contatori, Victron, dati di pubblicazione, eventi, ticket, interventi e PDF; dalla 1.3 soglie del contratto, aggiornamento e chiusura dei ticket, registro della disponibilità; dalla 1.4 listino e opzioni, archivi dopo il noleggio, registro delle impronte, documenti con tipo ed email al cliente (vedi *API per webcam-portal* e *Listino e servizi* sotto).
+- **Listino e servizi** (dalla 1.4): livello base/standard/pro, opzioni a pagamento (sponsor, certificato maltempo, filmato finale, rapporto mensile per email) e matrice delle funzioni nella scheda; riquadro *Archivi dopo il noleggio*; scheda *Registro* con le impronte giornaliere delle foto.
 
 Contratti, preventivi, fatture (anche ricorrenti ed elettroniche con i moduli italiani) e il resto del CRM sono quelli di Dolibarr.
 
@@ -67,6 +68,11 @@ Dalla 1.2 il modulo implementa il contratto [API Dolibarr v2](https://github.com
 | `PUT {id}/tickets/{ticket_id}` (1.3) | Messaggio privato nel ticket (obbligatorio, idempotente con `portal_event_id`); `close` = 1 chiude solo se il ticket è *non letto* o *letto*, altrimenti risponde `closed: false, close_refused: "in_progress"` e lo chiude l'operatore; `severity_code` solo verso l'alto. Solo ticket aperti dal portal e collegati alla webcam (403 altrimenti); 409 se già chiuso o annullato | Ticket → Creare/modificare |
 | `POST {id}/availability` (1.3) | Disponibilità del mese (`period` AAAA-MM, percentuale, ore previste/escluse/disponibili, incidenti, interventi in ritardo, `final`). Inserisce o aggiorna la riga del mese; 409 se il mese è già definitivo. Con `final` = 1 aggiorna l'ultima disponibilità della webcam e scrive un evento in agenda (`AC_WEBCAMS_SLA` se l'impegno non è rispettato) | |
 | `GET {id}/availability?from=AAAA-MM&to=AAAA-MM` (1.3) | Mesi registrati, dal più vecchio | |
+| `GET {id}/portal` (1.4) | In più `plan` (livello, nota, periodo del noleggio), `options` (sponsor, certificato maltempo, filmato, rapporto con i destinatari validi) e `archives` (archivi dopo il noleggio ancora visibili) | |
+| `PUT {id}/portal` (1.4) | In più `film_status` (`queued`, `ready`) e `film_url`; un `delivered` messo dall'operatore non si sovrascrive (`ignored`); `ready` scrive "Filmato finale pronto" in cronologia | |
+| `POST {id}/documents` (1.4) | In più `doc_type` (`monthly_report`, `weather_certificate`, `weather_register`, `other`), `period` (AAAA-MM o AAAA-MM-GG_AAAA-MM-GG), `portal_doc_id` e `send_email` (`template` `report`/`weather`, `link`, `resend`): Dolibarr manda il PDF al cliente con il suo modello email; risposta con `email` (`sent`, `duplicate`, `to`, `actioncomm_id`, `reason`) | |
+| `POST {id}/register` (1.4) | Da 1 a 31 giorni del registro delle impronte; per ogni giorno `created`, `duplicate` (stesso hash) o `conflict` (hash diverso: nulla cambia, evento `AC_WEBCAMS_REGISTER`); 400 per hash non validi o giorni futuri | |
+| `GET {id}/register?from=AAAA-MM-GG&to=AAAA-MM-GG` (1.4) | Giorni depositati con `registered_at` (ora del deposito, secondi Unix) | |
 
 Errori: `401` chiave sbagliata, `403` permesso mancante, `404` webcam inesistente, `400` dati non validi.
 
@@ -101,6 +107,27 @@ curl -s -X POST -H "DOLAPIKEY: <chiave>" -H 'Content-Type: application/json' \
 
 `report` resta identico; in più accetta (facoltativi) `camera_serial`, `shutter_count`, `shots_total`, `camera_hours`, `camera_power_cycles`, `battery_v`, `charge_state`, con le stesse regole di `counters`. Un router con la 1.0-rc8 continua a funzionare.
 
+## Listino e servizi (1.4)
+
+Dolibarr è la fonte del contratto commerciale: il portal legge livello e opzioni con `GET {id}/portal` (al più una volta l'ora) e da lì calcola le funzioni; la scheda mostra la stessa matrice come aiuto.
+
+| Campo della scheda | Significato | Vuoto |
+|---|---|---|
+| Livello di listino (`plan_level`) | `base`, `standard`, `pro` | `base` |
+| Nota del listino, inizio e fine del noleggio | riferimento dell'offerta; la fine è la data del filmato finale | |
+| Pacchetto sponsor, spazi, dal / fino al (`sponsor_*`) | sponsor e infopoint sull'immagine anche sotto il livello pro, solo nel periodo (vale anche per il pro) | 2 spazi, senza limiti di data |
+| Certificato giornate di maltempo (`opt_weather_cert`) | registro e certificato anche sotto il livello pro | no |
+| Filmato finale, formato, durata (`film_*`) | `auto` o `edited`; orizzontale, verticale o entrambi | non venduto; orizzontale; 60 s |
+| Rapporto mensile per email, destinatari (`report_*`) | Sì = rapporto e certificato mandati per email; indirizzi separati da virgola | Sì; email del cliente |
+
+Stato del filmato: lo scrive il portal (*In preparazione*, *Pronto* con il link); quando lo consegni usa il pulsante **Filmato consegnato** sulla scheda, e il portal non lo cambia più.
+
+**Archivi dopo il noleggio**: nel riquadro sotto la scheda una riga per cliente e noleggio finito dice fino a quando quel cliente vede ancora l'archivio nel portal (senza riga il portal usa 30 giorni). Quando cambi il cliente di una webcam la scheda propone la riga per il cliente precedente con la fine del noleggio a oggi: compila la data e aggiungila, o ignorala.
+
+**Registro**: la scheda *Registro* mostra le impronte giornaliere (SHA-256 dell'elenco delle foto del giorno) depositate dal portal il giorno dopo, con la classificazione meteo e l'ora del deposito. Le righe non si modificano né dalle API né dalla scheda; un hash diverso per un giorno già depositato lascia la riga com'è e scrive un evento da controllare. Una webcam con registro non si può eliminare (va messa *Ritirata*).
+
+**Email ai clienti**: rapporto mensile e certificato li manda Dolibarr, non il portal. All'attivazione il modulo crea i modelli "Rapporto mensile webcam" e "Certificato giornate di maltempo" (tipo *Webcam* in *Impostazioni → Email → Modelli email*), che puoi modificare; nelle impostazioni del modulo scegli quali usare e il mittente. Oltre alle sostituzioni standard di Dolibarr (`__THIRDPARTY_NAME__`, `__MYCOMPANY_NAME__`...) ci sono `__WEBCAM_REF__`, `__WEBCAM_LABEL__`, `__WEBCAM_PERIOD__` (es. "novembre 2026") e `__WEBCAM_LINK__`. Ogni invio è un evento *Email inviata al cliente* (`AC_WEBCAMS_SENTBYMAIL`) nella cronologia della webcam e del cliente; un invio non riuscito (nessun destinatario, modello mancante, errore della posta) è un evento *Email del rapporto non inviata* da guardare. Serve la posta configurata in *Impostazioni → Email*.
+
 ## Accesso remoto (rttys)
 
 Con l'URL di rttys impostato (es. `https://remote.viewlapse.com`) la scheda webcam ha i pulsanti:
@@ -126,6 +153,9 @@ In *Impostazioni → Moduli → Webcam → Impostazioni*:
 | `WEBCAMS_SLA_OFFLINE_HOURS` | `3` | Impegno di disponibilità: ore senza foto prima dell'intervento, per le webcam con il campo vuoto |
 | `WEBCAMS_SLA_RESPONSE_DAYS` | `3` | Impegno di disponibilità: giorni per l'intervento, per le webcam con il campo vuoto |
 | `WEBCAMS_SLA_TARGET_PCT` | `98` | Impegno di disponibilità: disponibilità mensile minima, per le webcam con il campo vuoto |
+| `WEBCAMS_EMAIL_TEMPLATE_REPORT` | vuoto | Modello email del rapporto mensile; vuoto = "Rapporto mensile webcam" creato dal modulo |
+| `WEBCAMS_EMAIL_TEMPLATE_WEATHER` | vuoto | Modello email del certificato delle giornate di maltempo; vuoto = "Certificato giornate di maltempo" |
+| `WEBCAMS_EMAIL_FROM` | vuoto | Mittente delle email ai clienti; vuoto = `MAIN_MAIL_EMAIL_FROM` |
 
 Per la vita dell'otturatore conta il contatore letto dalla fotocamera (`shutter_count`) se c'è, altrimenti quello del router (`shots_total`). Il modulo è la **sola fonte degli avvisi dell'otturatore** in Dolibarr: `report` e `counters` scrivono un evento in agenda una volta per soglia (90% e fine vita) e per fotocamera; il portal non manda eventi né ticket per l'otturatore e legge le stesse soglie con `GET {id}/portal`.
 
@@ -149,6 +179,13 @@ Il portal le legge con `GET {id}/portal`, calcola la disponibilità (ore con alm
 Aggiorna `$this->version` in `core/modules/modWebcams.class.php`, il file `VERSION` e `ChangeLog.md`, poi pubblica una release su GitHub con tag uguale alla versione: lo zip viene creato e allegato da solo. Per crearlo a mano c'è `./build.sh`. Dolibarr legge `VERSION` per segnalare nella pagina dei moduli che c'è un aggiornamento.
 
 Quando una versione aggiunge colonne (per esempio la 1.1, con temperatura e umidità esterne), dopo aver caricato lo zip disattiva e riattiva il modulo: Dolibarr esegue `sql/update_*.sql` e aggiunge le colonne senza toccare i dati.
+
+### Aggiornare alla 1.4 (da qualsiasi versione precedente)
+
+1. Carica lo zip della 1.4 (o `git pull` nella cartella `custom/webcams`).
+2. *Impostazioni → Moduli*: **disattiva e riattiva Webcam** (o **Aggiorna il database** nelle impostazioni del modulo). Dolibarr crea `llx_webcams_archive` e `llx_webcams_register`, esegue tutti gli `update_*.sql` fino a `update_1.3-1.4.sql` (le webcam esistenti diventano livello `base`, rapporto per email sì) e crea i due modelli email se non ci sono. Dati, permessi e modelli già modificati restano.
+3. Cancella `api/temp/routes.php` nella cartella dei documenti se gli endpoint nuovi (`register`) rispondono 404.
+4. Nessun permesso nuovo per l'utente `webcam-portal`. Controlla la configurazione della posta (*Impostazioni → Email*), il mittente e i modelli nelle impostazioni del modulo, poi compila livello e opzioni sulle webcam a noleggio.
 
 ### Aggiornare alla 1.3 (dalla 1.2, 1.1 o 1.0)
 
