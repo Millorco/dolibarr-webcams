@@ -669,10 +669,10 @@ class Webcams extends DolibarrApi
 	 * recorded in the agenda of the webcam.
 	 *
 	 * @param	int		$id				ID of webcam
-	 * @param	array	$request_data	{portal_slug, url_current, windy_published, windy_id}
+	 * @param	array	$request_data	{portal_slug, url_current, windy_published, windy_id, film_status (queued, ready), film_url}
 	 * @phan-param ?array<string,mixed> $request_data
 	 * @phpstan-param ?array<string,mixed> $request_data
-	 * @return	array	{ok, id}
+	 * @return	array	{ok, id, ignored}
 	 * @phan-return array<string,mixed>
 	 * @phpstan-return array<string,mixed>
 	 *
@@ -717,8 +717,30 @@ class Webcams extends DolibarrApi
 			}
 			$set['windy_id'] = $v;
 		}
-		if (!$set) {
-			throw new RestException(400, 'Nothing to update: send portal_slug, url_current, windy_published or windy_id');
+		// 1.4: final film (M10), written by the portal; delivered is set by the operator
+		$ignored = array();
+		$filmready = false;
+		if (array_key_exists('film_status', $in)) {
+			$v = $this->_inString($in, 'film_status', 16);
+			if ($v !== null && !in_array($v, array('queued', 'ready'), true)) {
+				throw new RestException(400, 'film_status must be queued or ready');
+			}
+			if ((string) $object->film_status === 'delivered') {
+				$ignored[] = 'film_status';
+			} elseif ($v !== (string) $object->film_status) {
+				$set['film_status'] = $v;
+				$filmready = ($v === 'ready');
+			}
+		}
+		if (array_key_exists('film_url', $in)) {
+			$v = $this->_inString($in, 'film_url', 255);
+			if ($v !== null && (!preg_match('/^https?:\/\//i', $v) || !filter_var($v, FILTER_VALIDATE_URL))) {
+				throw new RestException(400, 'film_url invalid');
+			}
+			$set['film_url'] = $v;
+		}
+		if (!$set && !$ignored && !array_key_exists('film_status', $in)) {
+			throw new RestException(400, 'Nothing to update: send portal_slug, url_current, windy_published, windy_id, film_status or film_url');
 		}
 
 		$events = array();
@@ -729,8 +751,12 @@ class Webcams extends DolibarrApi
 		foreach ($events as $text) {
 			$this->_addEvent($object, $text);
 		}
+		if ($filmready) {
+			$url = (string) $object->film_url;
+			$this->_addEvent($object, $this->_trans('WebcamEventFilmReady'), 'AC_WEBCAMS_PORTAL', 0, '', $this->_trans('WebcamEventFilmReady').($url !== '' ? "\n".$url : ''));
+		}
 
-		return array('ok' => true, 'id' => (int) $object->id);
+		return array('ok' => true, 'id' => (int) $object->id, 'ignored' => $ignored);
 	}
 
 	/**
@@ -1130,7 +1156,7 @@ class Webcams extends DolibarrApi
 	 * fields), shutter thresholds and links to rttys.
 	 *
 	 * @param	int		$id		ID of webcam
-	 * @return	array	{ok, id, ref, status, customer, portal, sla, shutter, rttys}
+	 * @return	array	{ok, id, ref, status, customer, portal, sla, shutter, rttys, plan, options, archives}
 	 * @phan-return array<string,mixed>
 	 * @phpstan-return array<string,mixed>
 	 *
@@ -1155,6 +1181,16 @@ class Webcams extends DolibarrApi
 		unset($sla['defaults']);
 		$used = webcamsShotsUsed($object);
 		$rttys = webcamsRttysUrls($object->ref);
+		$planopt = webcamsPlanOptions($this->db, $object);
+		$archives = array();
+		foreach (webcamsArchives($this->db, $object->id, true) as $a) {
+			$archives[] = array(
+				'socid' => (int) $a->fk_soc,
+				'rental_start' => $a->rental_start ? substr((string) $a->rental_start, 0, 10) : null,
+				'rental_end' => substr((string) $a->rental_end, 0, 10),
+				'archive_until' => substr((string) $a->archive_until, 0, 10),
+			);
+		}
 
 		return array(
 			'ok' => true,
@@ -1176,6 +1212,10 @@ class Webcams extends DolibarrApi
 				'level' => webcamsShutterLevel($used),
 			),
 			'rttys' => $rttys ? $rttys : new stdClass(),
+			// 1.4 (API 2.2): price list, options, archives after the rental
+			'plan' => $planopt['plan'],
+			'options' => $planopt['options'],
+			'archives' => $archives,
 		);
 	}
 
@@ -1479,10 +1519,10 @@ class Webcams extends DolibarrApi
 	 * and indexed so it is shown there.
 	 *
 	 * @param	int		$id				ID of webcam
-	 * @param	array	$request_data	{filename, filecontent (base64), fileencoding ("base64"), overwrite (0/1), description, sha256}
+	 * @param	array	$request_data	{filename, filecontent (base64), fileencoding ("base64"), overwrite (0/1), description, sha256, doc_type, period, portal_doc_id, send_email: {template, link, resend}}
 	 * @phan-param ?array<string,mixed> $request_data
 	 * @phpstan-param ?array<string,mixed> $request_data
-	 * @return	array	{ok, id, file}
+	 * @return	array	{ok, id, file, email}
 	 * @phan-return array<string,mixed>
 	 * @phpstan-return array<string,mixed>
 	 *
@@ -1536,6 +1576,45 @@ class Webcams extends DolibarrApi
 		$overwrite = !empty($in['overwrite']);
 		$description = $this->_inString($in, 'description', 255);
 
+		// 1.4 (API 2.2): type, period, idempotence of the email, email to the customer
+		$doctype = null;
+		if (isset($in['doc_type']) && $in['doc_type'] !== '') {
+			$doctype = is_string($in['doc_type']) ? $in['doc_type'] : '';
+			if (!in_array($doctype, array('monthly_report', 'weather_certificate', 'weather_register', 'other'), true)) {
+				throw new RestException(400, 'doc_type must be monthly_report, weather_certificate, weather_register or other');
+			}
+		}
+		$period = null;
+		if (isset($in['period']) && $in['period'] !== '') {
+			$period = is_string($in['period']) ? $in['period'] : '';
+			if (!preg_match('/^(19|20)\d{2}-(0[1-9]|1[0-2])$/', $period) && !$this->_isDayRange($period)) {
+				throw new RestException(400, 'period invalid (YYYY-MM or YYYY-MM-DD_YYYY-MM-DD)');
+			}
+		}
+		$portaldocid = null;
+		if (isset($in['portal_doc_id']) && $in['portal_doc_id'] !== '') {
+			$portaldocid = is_scalar($in['portal_doc_id']) ? (string) $in['portal_doc_id'] : '';
+			if (!preg_match('/^[a-z][a-z0-9_]{0,31}:[A-Za-z0-9_.-]{1,64}$/', $portaldocid)) {
+				throw new RestException(400, 'portal_doc_id invalid (report:<id> or certificate:<id>)');
+			}
+		}
+		$sendemail = null;
+		if (isset($in['send_email']) && $in['send_email'] !== '' && $in['send_email'] !== false) {
+			if (!is_array($in['send_email'])) {
+				throw new RestException(400, 'send_email must be an object {template, link, resend}');
+			}
+			$se = $in['send_email'];
+			$tpl = isset($se['template']) && $se['template'] !== '' ? $se['template'] : ($doctype === 'monthly_report' ? 'report' : (in_array($doctype, array('weather_certificate', 'weather_register'), true) ? 'weather' : null));
+			if (!in_array($tpl, array('report', 'weather'), true)) {
+				throw new RestException(400, 'send_email.template must be report or weather');
+			}
+			$link = $this->_inString($se, 'link', 255);
+			if ($link !== null && (!preg_match('/^https?:\/\//i', $link) || !filter_var($link, FILTER_VALIDATE_URL))) {
+				throw new RestException(400, 'send_email.link invalid');
+			}
+			$sendemail = array('template' => $tpl, 'link' => (string) $link, 'resend' => !empty($se['resend']));
+		}
+
 		$entity = (int) ($object->entity ?: $conf->entity);
 		$base = !empty($conf->webcams->multidir_output[$entity]) ? $conf->webcams->multidir_output[$entity] : $conf->webcams->dir_output;
 		$rel = 'webcam/'.dol_sanitizeFileName($object->ref);
@@ -1561,8 +1640,16 @@ class Webcams extends DolibarrApi
 			deleteFilesIntoDatabaseIndex($dir, $filename, '');
 		}
 		$res = addFileIntoDatabaseIndex($dir, $filename, '', 'api', 0, $object);
-		if ($res > 0 && $description) {
-			$sql = "UPDATE ".$this->db->prefix()."ecm_files SET description = '".$this->db->escape($description)."'";
+		$keywords = $doctype !== null ? 'webcams:'.$doctype.($period !== null ? ':'.$period : '') : '';
+		if ($res > 0 && ($description || $keywords !== '')) {
+			$parts = array();
+			if ($description) {
+				$parts[] = "description = '".$this->db->escape($description)."'";
+			}
+			if ($keywords !== '') {
+				$parts[] = "keywords = '".$this->db->escape($keywords)."'";
+			}
+			$sql = "UPDATE ".$this->db->prefix()."ecm_files SET ".implode(', ', $parts);
 			$sql .= " WHERE filepath = '".$this->db->escape($relindex)."' AND filename = '".$this->db->escape($filename)."'";
 			$sql .= " AND entity = ".((int) $entity);
 			$this->db->query($sql);
@@ -1570,7 +1657,202 @@ class Webcams extends DolibarrApi
 
 		$this->_addEvent($object, $this->_trans($exists ? 'WebcamEventDocumentReplaced' : 'WebcamEventDocumentAdded', $filename), 'AC_WEBCAMS_PORTAL', 0, '', $description ? $description : '');
 
-		return array('ok' => true, 'id' => (int) $object->id, 'file' => $rel.'/'.$filename);
+		$email = null;
+		if ($sendemail !== null) {
+			$email = $this->_sendDocument($object, $dest, $filename, $sendemail, (string) $period, (string) $portaldocid, $doctype);
+		}
+
+		return array('ok' => true, 'id' => (int) $object->id, 'file' => $rel.'/'.$filename, 'email' => $email);
+	}
+
+	/**
+	 * Daily register of the fingerprints of the photos, from webcam-portal (O2)
+	 *
+	 * Dolibarr is the second witness: each day is saved once, with the time of
+	 * the deposit, and never changed. Per day: new = created; same day and same
+	 * day_hash = duplicate; same day with another day_hash = conflict (nothing
+	 * is changed, event AC_WEBCAMS_REGISTER in the agenda).
+	 *
+	 * @param	int		$id				ID of webcam
+	 * @param	array	$request_data	{days: [{day, timezone, hash_scheme, day_hash, prev_day_hash, photos, photos_unsynced, classification, reasons, wet_hours, frost_hours, fog_hours}]} (1-31 days)
+	 * @phan-param ?array<string,mixed> $request_data
+	 * @phpstan-param ?array<string,mixed> $request_data
+	 * @return	array	{ok, id, results: [{day, status, registered_at}]}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	POST {id}/register
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 500 System error
+	 */
+	public function postRegister($id, $request_data = null)
+	{
+		$object = $this->_fetchForPortal($id);
+		$in = is_array($request_data) ? $request_data : array();
+		if (empty($in['days']) || !is_array($in['days']) || array_values($in['days']) !== $in['days']) {
+			throw new RestException(400, 'days missing (list of 1-31 days)');
+		}
+		if (count($in['days']) > 31) {
+			throw new RestException(400, 'Too many days (max 31 per request)');
+		}
+		$today = gmdate('Y-m-d', dol_now());
+		$hex = '/^[0-9a-f]{64}$/';
+
+		// Check all the days before writing anything
+		$days = array();
+		foreach ($in['days'] as $i => $d) {
+			$p = 'days['.$i.'].';
+			if (!is_array($d)) {
+				throw new RestException(400, $p.' must be an object');
+			}
+			$day = isset($d['day']) && is_string($d['day']) ? $d['day'] : '';
+			if (!$this->_isDay($day)) {
+				throw new RestException(400, $p.'day invalid (YYYY-MM-DD)');
+			}
+			if (strcmp($day, $today) > 0) {
+				throw new RestException(400, $p.'day in the future');
+			}
+			$tz = isset($d['timezone']) && is_string($d['timezone']) ? $d['timezone'] : '';
+			if (!preg_match('/^[A-Za-z0-9_+\/-]{1,64}$/', $tz) || (!in_array($tz, DateTimeZone::listIdentifiers(DateTimeZone::ALL_WITH_BC), true) && $tz !== 'UTC')) {
+				throw new RestException(400, $p.'timezone invalid (IANA name, e.g. Europe/Rome)');
+			}
+			$scheme = isset($d['hash_scheme']) && is_string($d['hash_scheme']) ? $d['hash_scheme'] : '';
+			if (!preg_match('/^[a-z][a-z0-9]{0,15}$/', $scheme)) {
+				throw new RestException(400, $p.'hash_scheme invalid (e.g. vlreg1)');
+			}
+			$hash = isset($d['day_hash']) && is_string($d['day_hash']) ? $d['day_hash'] : '';
+			if (!preg_match($hex, $hash)) {
+				throw new RestException(400, $p.'day_hash must be 64 lowercase hexadecimal characters');
+			}
+			$prev = (isset($d['prev_day_hash']) && $d['prev_day_hash'] !== '') ? $d['prev_day_hash'] : null;
+			if ($prev !== null && (!is_string($prev) || !preg_match($hex, $prev))) {
+				throw new RestException(400, $p.'prev_day_hash must be 64 lowercase hexadecimal characters or null');
+			}
+			$photos = $this->_inNumber($d, 'photos', 0, 2147483647, $p, true);
+			if ($photos === null) {
+				throw new RestException(400, $p.'photos missing');
+			}
+			$class = $this->_inString($d, 'classification', 16);
+			if ($class !== null && !preg_match('/^[a-z][a-z_]{0,15}$/', $class)) {
+				throw new RestException(400, $p.'classification invalid (ok, bad_weather, not_certifiable, no_data)');
+			}
+			$reasons = $this->_inString($d, 'reasons', 32);
+			if ($reasons !== null && !preg_match('/^[a-z_]+(,[a-z_]+)*$/', $reasons)) {
+				throw new RestException(400, $p.'reasons invalid (e.g. wet,frost,fog,dark)');
+			}
+			$days[] = array(
+				'day' => $day,
+				'timezone' => $tz,
+				'hash_scheme' => $scheme,
+				'day_hash' => $hash,
+				'prev_day_hash' => $prev,
+				'photos' => (int) $photos,
+				'photos_unsynced' => (int) $this->_inNumber($d, 'photos_unsynced', 0, 2147483647, $p, true),
+				'classification' => $class,
+				'reasons' => $reasons,
+				'wet_hours' => $this->_inNumber($d, 'wet_hours', 0, 24, $p, true),
+				'frost_hours' => $this->_inNumber($d, 'frost_hours', 0, 24, $p, true),
+				'fog_hours' => $this->_inNumber($d, 'fog_hours', 0, 24, $p, true),
+			);
+		}
+
+		$table = $this->db->prefix().'webcams_register';
+		$entity = (int) (empty($object->entity) ? 1 : $object->entity);
+		$results = array();
+		foreach ($days as $d) {
+			$row = $this->_registerRow($object, $d['day']);
+			if (!$row) {
+				$q = function ($v) {
+					return $v === null ? 'NULL' : "'".$this->db->escape((string) $v)."'";
+				};
+				$n = function ($v) {
+					return $v === null ? 'NULL' : (string) ((int) $v);
+				};
+				$sql = "INSERT INTO ".$table." (entity, fk_webcam, fk_soc, day, timezone, hash_scheme, day_hash, prev_day_hash, photos, photos_unsynced,";
+				$sql .= " classification, reasons, wet_hours, frost_hours, fog_hours, date_creation) VALUES (";
+				$sql .= $entity.", ".((int) $object->id).", ".($object->fk_soc > 0 ? (int) $object->fk_soc : 'NULL').", ".$q($d['day']).", ".$q($d['timezone']).", ";
+				$sql .= $q($d['hash_scheme']).", ".$q($d['day_hash']).", ".$q($d['prev_day_hash']).", ".$n($d['photos']).", ".$n($d['photos_unsynced']).", ";
+				$sql .= $q($d['classification']).", ".$q($d['reasons']).", ".$n($d['wet_hours']).", ".$n($d['frost_hours']).", ".$n($d['fog_hours']).", ";
+				$sql .= "'".$this->db->idate(dol_now())."')";
+				if ($this->db->query($sql)) {
+					$row = $this->_registerRow($object, $d['day']);
+					$results[] = array('day' => $d['day'], 'status' => 'created', 'registered_at' => $row ? (int) $this->db->jdate($row->date_creation) : dol_now());
+					continue;
+				}
+				// Two deposits at the same time: the other one won
+				$row = $this->_registerRow($object, $d['day']);
+				if (!$row) {
+					throw new RestException(500, 'Error saving register: '.$this->db->lasterror());
+				}
+			}
+			$at = (int) $this->db->jdate($row->date_creation);
+			if (hash_equals((string) $row->day_hash, $d['day_hash'])) {
+				$results[] = array('day' => $d['day'], 'status' => 'duplicate', 'registered_at' => $at);
+				continue;
+			}
+			// Conflict: nothing changes, one event per day and hash for the operator
+			$refext = 'register:'.$d['day'].':'.substr($d['day_hash'], 0, 16);
+			if (!$this->_findActionComm($object, $refext)) {
+				$text = $this->_trans('WebcamEventRegisterConflict', dol_print_date(dol_stringtotime($d['day'].' 12:00:00', 0), 'day'));
+				$note = $text."\n".$this->_trans('WebcamRegisterConflictNote', $row->day_hash, $d['day_hash'], dol_print_date($at, 'dayhour', 'tzuserrel'));
+				$this->_addEvent($object, $text, 'AC_WEBCAMS_REGISTER', 0, $refext, $note);
+			}
+			$results[] = array('day' => $d['day'], 'status' => 'conflict', 'registered_at' => $at);
+		}
+
+		return array('ok' => true, 'id' => (int) $object->id, 'results' => $results);
+	}
+
+	/**
+	 * Days of the register saved in Dolibarr (from - to, oldest first), with the time of the deposit
+	 *
+	 * @param	int		$id		ID of webcam
+	 * @param	string	$from	First day YYYY-MM-DD (optional)
+	 * @param	string	$to		Last day YYYY-MM-DD (optional)
+	 * @return	array	{ok, id, days: [...]}
+	 * @phan-return array<string,mixed>
+	 * @phpstan-return array<string,mixed>
+	 *
+	 * @url	GET {id}/register
+	 *
+	 * @throws RestException 400 Bad request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 */
+	public function getRegister($id, $from = '', $to = '')
+	{
+		$object = $this->_fetchForPortal($id);
+		foreach (array('from' => $from, 'to' => $to) as $k => $v) {
+			if ($v !== '' && $v !== null && !$this->_isDay((string) $v)) {
+				throw new RestException(400, $k.' invalid (YYYY-MM-DD)');
+			}
+		}
+		if ($from && $to && strcmp($from, $to) > 0) {
+			throw new RestException(400, 'from after to');
+		}
+		$days = array();
+		foreach (webcamsRegisterDays($this->db, $object->id, (string) $from, (string) $to) as $r) {
+			$days[] = array(
+				'day' => substr((string) $r->day, 0, 10),
+				'timezone' => (string) $r->timezone,
+				'hash_scheme' => (string) $r->hash_scheme,
+				'day_hash' => (string) $r->day_hash,
+				'prev_day_hash' => $r->prev_day_hash === null ? null : (string) $r->prev_day_hash,
+				'photos' => (int) $r->photos,
+				'photos_unsynced' => (int) $r->photos_unsynced,
+				'classification' => $r->classification === null ? null : (string) $r->classification,
+				'reasons' => $r->reasons === null ? null : (string) $r->reasons,
+				'wet_hours' => $r->wet_hours === null ? null : (int) $r->wet_hours,
+				'frost_hours' => $r->frost_hours === null ? null : (int) $r->frost_hours,
+				'fog_hours' => $r->fog_hours === null ? null : (int) $r->fog_hours,
+				'customer_id' => $r->fk_soc === null ? null : (int) $r->fk_soc,
+				'registered_at' => (int) $this->db->jdate($r->date_creation),
+			);
+		}
+		return array('ok' => true, 'id' => (int) $object->id, 'days' => $days);
 	}
 
 	/**
@@ -1741,9 +2023,10 @@ class Webcams extends DolibarrApi
 	 * @param	int		$datep		Date of the event (0 = now)
 	 * @param	string	$refext		External reference (portal:<id>)
 	 * @param	string	$note		Private note (default: the text)
+	 * @param	array<string,string>	$props	More properties of the event (email_from, email_to...)
 	 * @return	int					Id of the event, 0 if module Agenda is off, <0 if error
 	 */
-	private function _addEvent($object, $text, $code = 'AC_WEBCAMS_PORTAL', $datep = 0, $refext = '', $note = '')
+	private function _addEvent($object, $text, $code = 'AC_WEBCAMS_PORTAL', $datep = 0, $refext = '', $note = '', $props = array())
 	{
 		if (!isModEnabled('agenda')) {
 			return 0;
@@ -1763,6 +2046,9 @@ class Webcams extends DolibarrApi
 		$ev->elementtype = $object->element.'@'.$object->module;
 		if ($refext) {
 			$ev->ref_ext = $refext;
+		}
+		foreach ($props as $k => $v) {
+			$ev->$k = $v;
 		}
 		$res = $ev->create($user);
 		if ($res <= 0) {
@@ -2189,6 +2475,150 @@ class Webcams extends DolibarrApi
 			throw new RestException(400, $k.' invalid (YYYY-MM)');
 		}
 		return $in[$k];
+	}
+
+	/**
+	 * Row of the register of the webcam for a day
+	 *
+	 * @param	Webcam	$object		Webcam
+	 * @param	string	$day		YYYY-MM-DD
+	 * @return	object|null
+	 */
+	private function _registerRow($object, $day)
+	{
+		$sql = "SELECT rowid, day_hash, date_creation FROM ".$this->db->prefix()."webcams_register";
+		$sql .= " WHERE fk_webcam = ".((int) $object->id)." AND day = '".$this->db->escape($day)."'";
+		$resql = $this->db->query($sql);
+		if ($resql && ($obj = $this->db->fetch_object($resql))) {
+			return $obj;
+		}
+		return null;
+	}
+
+	/**
+	 * Whether a string is a valid day YYYY-MM-DD
+	 *
+	 * @param	string	$v		Value
+	 * @return	bool
+	 */
+	private function _isDay($v)
+	{
+		return is_string($v) && preg_match('/^(19|20)\d{2}-(\d{2})-(\d{2})$/', $v, $m) && checkdate((int) $m[2], (int) $m[3], (int) substr($v, 0, 4));
+	}
+
+	/**
+	 * Whether a string is a period of days YYYY-MM-DD_YYYY-MM-DD (start <= end)
+	 *
+	 * @param	string	$v		Value
+	 * @return	bool
+	 */
+	private function _isDayRange($v)
+	{
+		$p = explode('_', (string) $v);
+		return count($p) == 2 && $this->_isDay($p[0]) && $this->_isDay($p[1]) && strcmp($p[0], $p[1]) <= 0;
+	}
+
+	/**
+	 * Send a document just saved to the customer with an email template of
+	 * Dolibarr (send_email of POST webcams/{id}/documents, API 2.2)
+	 *
+	 * @param	Webcam	$object			Webcam
+	 * @param	string	$path			Full path of the PDF
+	 * @param	string	$filename		Name of the file
+	 * @param	array{template:string,link:string,resend:bool}	$send	Request
+	 * @param	string	$period			AAAA-MM, AAAA-MM-GG_AAAA-MM-GG or ''
+	 * @param	string	$portaldocid	report:<id>, certificate:<id> or ''
+	 * @param	string|null	$doctype	Type of the document
+	 * @return	array<string,mixed>		{requested, sent, duplicate, to, actioncomm_id, reason}
+	 */
+	private function _sendDocument($object, $path, $filename, $send, $period, $portaldocid, $doctype)
+	{
+		global $langs;
+
+		$res = array('requested' => true, 'sent' => false, 'duplicate' => false, 'to' => array(), 'actioncomm_id' => null, 'reason' => null);
+		$to = webcamsReportRecipients($this->db, $object);
+		$res['to'] = $to;
+		$refext = $portaldocid !== '' ? 'portal:'.$portaldocid : '';
+
+		// Idempotence: the email of a document of the portal goes once (unless resend)
+		if ($refext !== '' && empty($send['resend'])) {
+			$found = $this->_findActionComm($object, $refext);
+			if ($found) {
+				$res['sent'] = true;
+				$res['duplicate'] = true;
+				$res['actioncomm_id'] = $found;
+				return $res;
+			}
+		}
+
+		$fail = function ($reason, $detail = '') use (&$res, $object, $filename, $to) {
+			$res['reason'] = $reason;
+			if ($detail !== '') {
+				$res['detail'] = $detail;
+			}
+			$text = $this->_trans('WebcamEventEmailNotSent', $filename, $this->_trans('WebcamEmailReason_'.$reason));
+			$note = $text.($to ? "\n".$this->_trans('WebcamEmailTo').': '.implode(', ', $to) : '').($detail !== '' ? "\n".$detail : '');
+			$this->_addEvent($object, $text, 'AC_WEBCAMS_PORTAL', 0, '', $note);
+			return $res;
+		};
+
+		if (!$to) {
+			return $fail('no_recipient');
+		}
+		$tpl = webcamsEmailTemplate($this->db, $send['template']);
+		if (!$tpl) {
+			return $fail('template_missing', $send['template'] == 'weather' ? 'WEBCAMS_EMAIL_TEMPLATE_WEATHER' : 'WEBCAMS_EMAIL_TEMPLATE_REPORT');
+		}
+		$from = getDolGlobalString('WEBCAMS_EMAIL_FROM', getDolGlobalString('MAIN_MAIL_EMAIL_FROM'));
+		if ($from === '') {
+			return $fail('mail_error', 'No sender: set WEBCAMS_EMAIL_FROM or MAIN_MAIL_EMAIL_FROM');
+		}
+		if (getDolGlobalString('MAIN_DISABLE_ALL_MAILS')) {
+			return $fail('mail_error', 'MAIN_DISABLE_ALL_MAILS is set');
+		}
+
+		// Language of the customer if set, otherwise the one of Dolibarr
+		$object->fetch_thirdparty();
+		$outlangs = $langs;
+		if (is_object($object->thirdparty) && !empty($object->thirdparty->default_lang) && $object->thirdparty->default_lang != $langs->defaultlang) {
+			$outlangs = new Translate('', $GLOBALS['conf']);
+			$outlangs->setDefaultLang($object->thirdparty->default_lang);
+		}
+		$outlangs->loadLangs(array('main', 'webcams@webcams'));
+
+		$subst = getCommonSubstitutionArray($outlangs, 0, null, $object);
+		complete_substitutions_array($subst, $outlangs, $object);
+		$subst['__WEBCAM_REF__'] = (string) $object->ref;
+		$subst['__WEBCAM_LABEL__'] = (string) ($object->label !== null && $object->label !== '' ? $object->label : $object->ref);
+		$subst['__WEBCAM_PERIOD__'] = $period !== '' ? webcamsFormatDocPeriod($period, $outlangs) : '';
+		$subst['__WEBCAM_LINK__'] = (string) $send['link'];
+		$subject = trim(make_substitutions((string) $tpl->topic, $subst, $outlangs));
+		$body = make_substitutions((string) $tpl->content, $subst, $outlangs);
+		if ($subject === '') {
+			$subject = $filename;
+		}
+
+		require_once DOL_DOCUMENT_ROOT.'/core/class/CMailFile.class.php';
+		$trackid = 'webcam'.$object->id;
+		$mail = new CMailFile($subject, implode(', ', $to), $from, $body, array($path), array('application/pdf'), array($filename), '', '', 0, -1, '', '', $trackid, '', 'standard');
+		if (!empty($mail->error) || !$mail->sendfile()) {
+			return $fail('mail_error', dol_trunc(trim(strip_tags((string) $mail->error)), 500));
+		}
+
+		$res['sent'] = true;
+		$text = $this->_trans('WebcamEventEmailSent', $filename, implode(', ', $to));
+		$note = $this->_trans('WebcamEmailSubject').': '.$subject."\n".$this->_trans('WebcamEmailTo').': '.implode(', ', $to)."\n".$this->_trans('WebcamEmailFile').': '.$filename;
+		if ($doctype) {
+			$note .= "\n".'doc_type: '.$doctype.($period !== '' ? ' ('.$period.')' : '');
+		}
+		$evid = $this->_addEvent($object, $text, 'AC_WEBCAMS_SENTBYMAIL', 0, $refext, $note, array(
+			'email_from' => $from,
+			'email_to' => implode(', ', $to),
+			'email_subject' => $subject,
+			'email_msgid' => isset($mail->msgid) ? $mail->msgid : '',
+		));
+		$res['actioncomm_id'] = $evid > 0 ? (int) $evid : null;
+		return $res;
 	}
 
 	/* END API V2 (webcam-portal) */
