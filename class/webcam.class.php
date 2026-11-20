@@ -25,6 +25,8 @@
 
 // Put here all includes required by your class file
 require_once DOL_DOCUMENT_ROOT.'/core/class/commonobject.class.php';
+require_once __DIR__.'/../lib/webcams_compat.lib.php';
+require_once __DIR__.'/../lib/webcams_plan.lib.php';
 //require_once DOL_DOCUMENT_ROOT . '/societe/class/societe.class.php';
 //require_once DOL_DOCUMENT_ROOT . '/product/class/product.class.php';
 
@@ -139,10 +141,39 @@ class Webcam extends CommonObject
 		'date_installation' => array('type' => 'date', 'label' => 'WebcamInstallDate', 'enabled' => 1, 'position' => 55, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
 		'sim' => array('type' => 'varchar(128)', 'label' => 'WebcamSim', 'enabled' => 1, 'position' => 60, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
 		'public_url' => array('type' => 'url', 'label' => 'WebcamPublicUrl', 'enabled' => 1, 'position' => 65, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'portal_slug' => array('type' => 'varchar(64)', 'label' => 'WebcamPortalSlug', 'enabled' => 1, 'position' => 66, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'url_current' => array('type' => 'url', 'label' => 'WebcamUrlCurrent', 'enabled' => 1, 'position' => 67, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'windy_published' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamWindyPublished', 'enabled' => 1, 'position' => 68, 'notnull' => 0, 'visible' => -5, 'default' => '0', 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'windy_id' => array('type' => 'varchar(64)', 'label' => 'WebcamWindyId', 'enabled' => 1, 'position' => 69, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'sla_enabled' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamSlaEnabled', 'enabled' => 1, 'position' => 80, 'notnull' => 1, 'default' => '0', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamSlaEnabledHelp', 'lang' => 'webcams@webcams'),
+		'sla_offline_hours' => array('type' => 'integer', 'label' => 'WebcamSlaOfflineHours', 'enabled' => 1, 'position' => 81, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'help' => 'WebcamSlaOfflineHoursHelp', 'lang' => 'webcams@webcams'),
+		'sla_response_days' => array('type' => 'integer', 'label' => 'WebcamSlaResponseDays', 'enabled' => 1, 'position' => 82, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'help' => 'WebcamSlaResponseDaysHelp', 'lang' => 'webcams@webcams'),
+		'sla_target_pct' => array('type' => 'double(5,2)', 'label' => 'WebcamSlaTargetPct', 'enabled' => 1, 'position' => 83, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'help' => 'WebcamSlaTargetPctHelp', 'lang' => 'webcams@webcams'),
+		'sla_hours' => array('type' => 'varchar(11)', 'label' => 'WebcamSlaHours', 'enabled' => 1, 'position' => 84, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth150', 'placeholder' => '07:00-19:00', 'help' => 'WebcamSlaHoursHelp', 'lang' => 'webcams@webcams'),
+		'sla_weekdays' => array('type' => 'varchar(7)', 'label' => 'WebcamSlaWeekdays', 'enabled' => 1, 'position' => 85, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth100', 'placeholder' => '12345', 'help' => 'WebcamSlaWeekdaysHelp', 'lang' => 'webcams@webcams'),
+		'availability_pct' => array('type' => 'double(5,2)', 'label' => 'WebcamAvailabilityPct', 'enabled' => 1, 'position' => 88, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'isameasure' => 2, 'lang' => 'webcams@webcams'),
+		'availability_period' => array('type' => 'varchar(7)', 'label' => 'WebcamAvailabilityPeriod', 'enabled' => 1, 'position' => 89, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'plan_level' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('base' => 'WebcamPlanBase', 'standard' => 'WebcamPlanStandard', 'pro' => 'WebcamPlanPro'), 'label' => 'WebcamPlanLevel', 'enabled' => 1, 'position' => 90, 'notnull' => 1, 'default' => 'base', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamPlanLevelHelp', 'lang' => 'webcams@webcams'),
+		'plan_note' => array('type' => 'varchar(255)', 'label' => 'WebcamPlanNote', 'enabled' => 1, 'position' => 91, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'placeholder' => 'offerta 2026-118', 'lang' => 'webcams@webcams'),
+		'rental_start' => array('type' => 'date', 'label' => 'WebcamRentalStart', 'enabled' => 1, 'position' => 92, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'rental_end' => array('type' => 'date', 'label' => 'WebcamRentalEnd', 'enabled' => 1, 'position' => 93, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamRentalEndHelp', 'lang' => 'webcams@webcams'),
+		'sponsor_enabled' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamSponsorEnabled', 'enabled' => 1, 'position' => 94, 'notnull' => 1, 'default' => '0', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamSponsorEnabledHelp', 'lang' => 'webcams@webcams'),
+		'sponsor_slots' => array('type' => 'integer', 'label' => 'WebcamSponsorSlots', 'enabled' => 1, 'position' => 95, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'placeholder' => '2', 'help' => 'WebcamSponsorSlotsHelp', 'lang' => 'webcams@webcams'),
+		'sponsor_start' => array('type' => 'date', 'label' => 'WebcamSponsorStart', 'enabled' => 1, 'position' => 96, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'sponsor_end' => array('type' => 'date', 'label' => 'WebcamSponsorEnd', 'enabled' => 1, 'position' => 97, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'opt_weather_cert' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamOptWeatherCert', 'enabled' => 1, 'position' => 98, 'notnull' => 1, 'default' => '0', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamOptWeatherCertHelp', 'lang' => 'webcams@webcams'),
+		'film_option' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('auto' => 'WebcamFilmAuto', 'edited' => 'WebcamFilmEdited'), 'label' => 'WebcamFilmOption', 'enabled' => 1, 'position' => 99, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamFilmOptionHelp', 'lang' => 'webcams@webcams'),
+		'film_format' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('landscape' => 'WebcamFilmLandscape', 'portrait' => 'WebcamFilmPortrait', 'both' => 'WebcamFilmBoth'), 'label' => 'WebcamFilmFormat', 'enabled' => 1, 'position' => 100, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'lang' => 'webcams@webcams'),
+		'film_duration' => array('type' => 'integer', 'label' => 'WebcamFilmDuration', 'enabled' => 1, 'position' => 101, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'maxwidth75', 'placeholder' => '60', 'lang' => 'webcams@webcams'),
+		'film_status' => array('type' => 'varchar(16)', 'arrayofkeyval' => array('queued' => 'WebcamFilmQueued', 'ready' => 'WebcamFilmReady', 'delivered' => 'WebcamFilmDelivered'), 'label' => 'WebcamFilmStatus', 'enabled' => 1, 'position' => 102, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'film_url' => array('type' => 'url', 'label' => 'WebcamFilmUrl', 'enabled' => 1, 'position' => 103, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'report_enabled' => array('type' => 'integer', 'arrayofkeyval' => array('0' => 'No', '1' => 'Yes'), 'label' => 'WebcamReportEnabled', 'enabled' => 1, 'position' => 104, 'notnull' => 1, 'default' => '1', 'visible' => -1, 'alwayseditable' => 1, 'help' => 'WebcamReportEnabledHelp', 'lang' => 'webcams@webcams'),
+		'report_email' => array('type' => 'varchar(255)', 'label' => 'WebcamReportEmail', 'enabled' => 1, 'position' => 105, 'notnull' => 0, 'visible' => -1, 'alwayseditable' => 1, 'css' => 'minwidth300', 'help' => 'WebcamReportEmailHelp', 'lang' => 'webcams@webcams'),
 		'note_public' => array('type' => 'html', 'label' => 'NotePublic', 'enabled' => 1, 'position' => 70, 'notnull' => 0, 'visible' => 0, 'cssview' => 'wordbreak'),
 		'note_private' => array('type' => 'html', 'label' => 'NotePrivate', 'enabled' => 1, 'position' => 71, 'notnull' => 0, 'visible' => 0, 'cssview' => 'wordbreak'),
 		'last_contact' => array('type' => 'datetime', 'label' => 'WebcamLastContact', 'enabled' => 1, 'position' => 100, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'last_capture' => array('type' => 'datetime', 'label' => 'WebcamLastCapture', 'enabled' => 1, 'position' => 101, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'last_telemetry' => array('type' => 'datetime', 'label' => 'WebcamLastTelemetry', 'enabled' => 1, 'position' => 102, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'mac' => array('type' => 'varchar(17)', 'label' => 'WebcamMac', 'enabled' => 1, 'position' => 110, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'index' => 1, 'searchall' => 1, 'lang' => 'webcams@webcams'),
 		'hostname' => array('type' => 'varchar(100)', 'label' => 'WebcamHostname', 'enabled' => 1, 'position' => 111, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'searchall' => 1, 'lang' => 'webcams@webcams'),
 		'router_model' => array('type' => 'varchar(150)', 'label' => 'WebcamRouterModel', 'enabled' => 1, 'position' => 112, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
@@ -151,6 +182,7 @@ class Webcam extends CommonObject
 		'app_version' => array('type' => 'varchar(30)', 'label' => 'WebcamAppVersion', 'enabled' => 1, 'position' => 115, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'board_fw' => array('type' => 'varchar(30)', 'label' => 'WebcamBoardFw', 'enabled' => 1, 'position' => 116, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'camera' => array('type' => 'varchar(150)', 'label' => 'WebcamCamera', 'enabled' => 1, 'position' => 117, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'searchall' => 1, 'lang' => 'webcams@webcams'),
+		'camera_serial' => array('type' => 'varchar(64)', 'label' => 'WebcamCameraSerial', 'enabled' => 1, 'position' => 118, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'searchall' => 1, 'lang' => 'webcams@webcams'),
 		'vpn_ip' => array('type' => 'varchar(45)', 'label' => 'WebcamVpnIp', 'enabled' => 1, 'position' => 120, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'searchall' => 1, 'lang' => 'webcams@webcams'),
 		'public_ip' => array('type' => 'varchar(45)', 'label' => 'WebcamPublicIp', 'enabled' => 1, 'position' => 121, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'wan_ip' => array('type' => 'varchar(45)', 'label' => 'WebcamWanIp', 'enabled' => 1, 'position' => 122, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
@@ -173,7 +205,19 @@ class Webcam extends CommonObject
 		'humidity_ext' => array('type' => 'double(5,1)', 'label' => 'WebcamHumidityExt', 'enabled' => 1, 'position' => 174, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'last_photo' => array('type' => 'varchar(200)', 'label' => 'WebcamLastPhoto', 'enabled' => 1, 'position' => 175, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'first_contact' => array('type' => 'datetime', 'label' => 'WebcamFirstContact', 'enabled' => 1, 'position' => 180, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
-		'report_json' => array('type' => 'text', 'label' => 'WebcamReportJson', 'enabled' => 1, 'position' => 190, 'notnull' => 0, 'visible' => 0, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'shutter_count' => array('type' => 'integer', 'label' => 'WebcamShutterCount', 'enabled' => 1, 'position' => 182, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'shots_total' => array('type' => 'integer', 'label' => 'WebcamShotsTotal', 'enabled' => 1, 'position' => 183, 'notnull' => 0, 'visible' => 5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'camera_hours' => array('type' => 'double(8,1)', 'label' => 'WebcamCameraHours', 'enabled' => 1, 'position' => 184, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'camera_power_cycles' => array('type' => 'integer', 'label' => 'WebcamCameraPowerCycles', 'enabled' => 1, 'position' => 185, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'counters_date' => array('type' => 'datetime', 'label' => 'WebcamCountersDate', 'enabled' => 1, 'position' => 186, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'battery_v' => array('type' => 'double(5,2)', 'label' => 'WebcamBatteryV', 'enabled' => 1, 'position' => 191, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'battery_v_min24' => array('type' => 'double(5,2)', 'label' => 'WebcamBatteryVMin24', 'enabled' => 1, 'position' => 192, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'battery_soc' => array('type' => 'double(5,1)', 'label' => 'WebcamBatterySoc', 'enabled' => 1, 'position' => 193, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'charge_state' => array('type' => 'varchar(20)', 'label' => 'WebcamChargeState', 'enabled' => 1, 'position' => 194, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'solar_wh_yesterday' => array('type' => 'integer', 'label' => 'WebcamSolarWhYesterday', 'enabled' => 1, 'position' => 195, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'victron_error' => array('type' => 'integer', 'label' => 'WebcamVictronError', 'enabled' => 1, 'position' => 196, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'victron_date' => array('type' => 'datetime', 'label' => 'WebcamVictronDate', 'enabled' => 1, 'position' => 197, 'notnull' => 0, 'visible' => -5, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
+		'report_json' => array('type' => 'text', 'label' => 'WebcamReportJson', 'enabled' => 1, 'position' => 199, 'notnull' => 0, 'visible' => 0, 'noteditable' => 1, 'lang' => 'webcams@webcams'),
 		'date_creation' => array('type' => 'datetime', 'label' => 'DateCreation', 'enabled' => 1, 'position' => 500, 'notnull' => 1, 'visible' => -2),
 		'tms' => array('type' => 'timestamp', 'label' => 'DateModification', 'enabled' => 1, 'position' => 501, 'notnull' => 0, 'visible' => -2),
 		'fk_user_creat' => array('type' => 'integer:User:user/class/user.class.php', 'label' => 'UserAuthor', 'picto' => 'user', 'enabled' => 1, 'position' => 510, 'notnull' => 1, 'visible' => -2, 'foreignkey' => '0', 'csslist' => 'tdoverflowmax150'),
@@ -271,6 +315,90 @@ class Webcam extends CommonObject
 	/** @var mixed */
 	public $humidity_ext;
 	/** @var mixed */
+	public $portal_slug;
+	/** @var mixed */
+	public $url_current;
+	/** @var mixed */
+	public $windy_published;
+	/** @var mixed */
+	public $windy_id;
+	/** @var mixed */
+	public $last_telemetry;
+	/** @var mixed */
+	public $camera_serial;
+	/** @var mixed */
+	public $shutter_count;
+	/** @var mixed */
+	public $shots_total;
+	/** @var mixed */
+	public $camera_hours;
+	/** @var mixed */
+	public $camera_power_cycles;
+	/** @var mixed */
+	public $counters_date;
+	/** @var mixed */
+	public $battery_v;
+	/** @var mixed */
+	public $battery_v_min24;
+	/** @var mixed */
+	public $battery_soc;
+	/** @var mixed */
+	public $charge_state;
+	/** @var mixed */
+	public $solar_wh_yesterday;
+	/** @var mixed */
+	public $victron_error;
+	/** @var mixed */
+	public $victron_date;
+	/** @var mixed */
+	public $sla_enabled;
+	/** @var mixed */
+	public $sla_offline_hours;
+	/** @var mixed */
+	public $sla_response_days;
+	/** @var mixed */
+	public $sla_target_pct;
+	/** @var mixed */
+	public $sla_hours;
+	/** @var mixed */
+	public $sla_weekdays;
+	/** @var mixed */
+	public $availability_pct;
+	/** @var mixed */
+	public $availability_period;
+	/** @var mixed */
+	public $plan_level;
+	/** @var mixed */
+	public $plan_note;
+	/** @var mixed */
+	public $rental_start;
+	/** @var mixed */
+	public $rental_end;
+	/** @var mixed */
+	public $sponsor_enabled;
+	/** @var mixed */
+	public $sponsor_slots;
+	/** @var mixed */
+	public $sponsor_start;
+	/** @var mixed */
+	public $sponsor_end;
+	/** @var mixed */
+	public $opt_weather_cert;
+	/** @var mixed */
+	public $film_option;
+	/** @var mixed */
+	public $film_format;
+	/** @var mixed */
+	public $film_duration;
+	/** @var mixed */
+	public $film_status;
+	/** @var mixed */
+	public $film_url;
+	/** @var mixed */
+	public $report_enabled;
+	/** @var mixed */
+	public $report_email;
+	/** @var mixed */
 	public $last_photo;
 	/** @var mixed */
 	public $first_contact;
@@ -315,14 +443,14 @@ class Webcam extends CommonObject
 	/**
 	 * @var array<array<string>|string>		List of child tables. To test if we can delete object.
 	 */
-	protected $childtables = array();
+	protected $childtables = array('webcams_register' => array('name' => 'WebcamRegister', 'fk_element' => 'fk_webcam'));
 
 	/**
 	 * @var string[]	List of child tables. To know object to delete on cascade.
 	 *               	If name matches '@ClassNAme:FilePathClass;ParentFkFieldName' it will
 	 *               	call method deleteByParentField(parentId, ParentFkFieldName) to fetch and delete child object
 	 */
-	protected $childtablesoncascade = array();
+	protected $childtablesoncascade = array('webcams_availability', 'webcams_archive');
 
 	/**
 	 * @var WebcamLine[]     Array of subtable lines
@@ -383,6 +511,9 @@ class Webcam extends CommonObject
 	 */
 	public function create(User $user, $notrigger = 0)
 	{
+		if ($this->checkSla() < 0 || $this->checkPlan() < 0) {
+			return -1;
+		}
 		$result = $this->createCommon($user, $notrigger);
 
 		// uncomment lines below if you want to validate object after creation
@@ -620,7 +751,128 @@ class Webcam extends CommonObject
 	 */
 	public function update(User $user, $notrigger = 0)
 	{
+		if ($this->checkSla() < 0 || $this->checkPlan() < 0) {
+			return -1;
+		}
 		return $this->updateCommon($user, $notrigger);
+	}
+
+	/**
+	 * Check and normalize the fields of the availability commitment (sla_*)
+	 * of the rental contract. Empty values mean the defaults of the setup.
+	 *
+	 * @return	int<-1,1>		1 if OK, -1 if a value is not valid (message in errors)
+	 */
+	public function checkSla()
+	{
+		global $langs;
+
+		$langs->load('webcams@webcams');
+		$err = array();
+		$empty = function ($v) {
+			return $v === null || $v === '';
+		};
+		$this->sla_enabled = empty($this->sla_enabled) ? 0 : 1;
+		if (!$empty($this->sla_offline_hours) && (!is_numeric($this->sla_offline_hours) || (int) $this->sla_offline_hours < 1 || (int) $this->sla_offline_hours > 720)) {
+			$err[] = $langs->transnoentities('WebcamSlaOfflineHours').': 1-720';
+		}
+		if (!$empty($this->sla_response_days) && (!is_numeric($this->sla_response_days) || (int) $this->sla_response_days < 1 || (int) $this->sla_response_days > 90)) {
+			$err[] = $langs->transnoentities('WebcamSlaResponseDays').': 1-90';
+		}
+		if (!$empty($this->sla_target_pct)) {
+			$v = str_replace(',', '.', (string) $this->sla_target_pct);
+			if (!is_numeric($v) || (float) $v <= 0 || (float) $v > 100) {
+				$err[] = $langs->transnoentities('WebcamSlaTargetPct').': 0-100';
+			}
+		}
+		if (!$empty($this->sla_hours)) {
+			$v = preg_replace('/\s+/', '', (string) $this->sla_hours);
+			// Same check as webcam_service.sla_hours of webcam-portal; 24:00 only as end
+			if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d-(([01]\d|2[0-3]):[0-5]\d|24:00)$/', $v) || substr($v, 0, 5) === substr($v, 6)) {
+				$err[] = $langs->transnoentities('WebcamSlaHours').': HH:MM-HH:MM';
+			} else {
+				$this->sla_hours = $v;
+			}
+		}
+		if (!$empty($this->sla_weekdays)) {
+			$v = (string) $this->sla_weekdays;
+			if (!preg_match('/^[1-7]{1,7}$/', $v)) {
+				$err[] = $langs->transnoentities('WebcamSlaWeekdays').': 1-7';
+			} else {
+				$d = array_unique(str_split($v));
+				sort($d);
+				$this->sla_weekdays = implode('', $d);
+			}
+		}
+		if ($err) {
+			// Only error (not errors): the card shows both
+			$this->error = $langs->transnoentities('WebcamSlaInvalid').' '.implode('; ', $err);
+			return -1;
+		}
+		return 1;
+	}
+
+	/**
+	 * Check and normalize the fields of the price list and of the options
+	 * (plan_level, sponsor_*, film_*, report_*, rental_*), as the contract API
+	 * Dolibarr 2.2 (module 1.4) describes them.
+	 *
+	 * @return	int<-1,1>		1 if OK, -1 if a value is not valid (message in error)
+	 */
+	public function checkPlan()
+	{
+		global $langs;
+
+		$langs->load('webcams@webcams');
+		$err = array();
+		$empty = function ($v) {
+			return $v === null || $v === '';
+		};
+		$this->plan_level = webcamsPlanLevel($this->plan_level);
+		$this->sponsor_enabled = empty($this->sponsor_enabled) ? 0 : 1;
+		$this->opt_weather_cert = empty($this->opt_weather_cert) ? 0 : 1;
+		$this->report_enabled = ($this->report_enabled === null || $this->report_enabled === '' || !empty($this->report_enabled)) ? 1 : 0;
+		if (!$empty($this->sponsor_slots) && (!is_numeric($this->sponsor_slots) || (int) $this->sponsor_slots < 1 || (int) $this->sponsor_slots > 20 || floor((float) $this->sponsor_slots) != $this->sponsor_slots)) {
+			$err[] = $langs->transnoentities('WebcamSponsorSlots').': 1-20';
+		}
+		if (!$empty($this->film_duration) && (!is_numeric($this->film_duration) || (int) $this->film_duration < 5 || (int) $this->film_duration > 3600)) {
+			$err[] = $langs->transnoentities('WebcamFilmDuration').': 5-3600';
+		}
+		if ($empty($this->film_option) || $this->film_option === '0') {
+			$this->film_option = null;
+		} elseif (!in_array($this->film_option, array('auto', 'edited'), true)) {
+			$err[] = $langs->transnoentities('WebcamFilmOption').': auto, edited';
+		}
+		if ($empty($this->film_format) || $this->film_format === '0') {
+			$this->film_format = null;
+		} elseif (!in_array($this->film_format, array('landscape', 'portrait', 'both'), true)) {
+			$err[] = $langs->transnoentities('WebcamFilmFormat').': landscape, portrait, both';
+		}
+		foreach (array(array('rental_start', 'rental_end', 'WebcamRentalEnd'), array('sponsor_start', 'sponsor_end', 'WebcamSponsorEnd')) as $p) {
+			$a = $this->{$p[0]};
+			$b = $this->{$p[1]};
+			if (!$empty($a) && !$empty($b) && (int) $b < (int) $a) {
+				$err[] = $langs->transnoentities($p[2]).': '.$langs->transnoentities('WebcamDateBeforeStart');
+			}
+		}
+		if (!$empty($this->report_email)) {
+			$list = array();
+			foreach (preg_split('/[,;\s]+/', (string) $this->report_email) as $e) {
+				if ($e === '') {
+					continue;
+				}
+				if (!isValidEmail($e)) {
+					$err[] = $langs->transnoentities('WebcamReportEmail').': '.$e;
+				}
+				$list[] = $e;
+			}
+			$this->report_email = $list ? implode(', ', $list) : null;
+		}
+		if ($err) {
+			$this->error = $langs->transnoentities('WebcamPlanInvalid').' '.implode('; ', $err);
+			return -1;
+		}
+		return 1;
 	}
 
 	/**

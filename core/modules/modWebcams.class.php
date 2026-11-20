@@ -80,7 +80,7 @@ class modWebcams extends DolibarrModules
 		$this->editor_squarred_logo = '';					// Must be image filename into the module/img directory followed with @modulename. Example: 'myimage.png@webcams'
 
 		// Possible values for version are: 'development', 'experimental', 'dolibarr', 'dolibarr_deprecated', 'experimental_deprecated' or a version string like 'x.y.z'
-		$this->version = '1.1';
+		$this->version = '1.4';
 		// Url to the file with your last numberversion of this module
 		$this->url_last_version = 'https://raw.githubusercontent.com/Millorco/dolibarr-webcams/main/VERSION';
 
@@ -136,8 +136,8 @@ class modWebcams extends DolibarrModules
 			// Set here all hooks context managed by module. To find available hook context, make a "grep -r '>initHooks(' *" on source code. You can also set hook context to 'all'
 			/* BEGIN MODULEBUILDER HOOKSCONTEXTS */
 			'hooks' => array(
-				// 'hookcontext1',
-				// 'hookcontext2',
+				'data' => array('emailtemplates'), // type of email template "Webcam" (webcams_webcam) in Setup - Emails - Templates
+				'entity' => '0',
 			),
 			/* END MODULEBUILDER HOOKSCONTEXTS */
 			// Set this to 1 if features of module are opened to external users
@@ -324,6 +324,11 @@ class modWebcams extends DolibarrModules
 		$this->rights[$r][1] = 'Delete webcams'; // Permission label
 		$this->rights[$r][4] = 'webcam';
 		$this->rights[$r][5] = 'delete'; // In php code, permission will be checked by test if ($user->hasRight('webcams', 'webcam', 'delete'))
+		$r++;
+		$this->rights[$r][0] = $this->numero . sprintf("%02d", ($o * 10) + 4); // 51730014 (contratto API Dolibarr v2)
+		$this->rights[$r][1] = 'Sync data from webcam-portal (counters, Victron, events, documents)'; // Permission label
+		$this->rights[$r][4] = 'webcam';
+		$this->rights[$r][5] = 'portal'; // In php code, permission will be checked by test if ($user->hasRight('webcams', 'webcam', 'portal'))
 		$r++;
 		/* END MODULEBUILDER PERMISSIONS */
 
@@ -532,7 +537,44 @@ class modWebcams extends DolibarrModules
 			}
 		}
 
-		return $this->_init($sql, $options);
+		$result = $this->_init($sql, $options);
+		if ($result > 0) {
+			$this->_initEmailTemplates();
+		}
+		return $result;
+	}
+
+	/**
+	 * Create the email templates of the module (type webcams_webcam) if they do
+	 * not exist yet: "Rapporto mensile webcam" and "Certificato giornate di
+	 * maltempo". They stay editable; a template already there is never changed.
+	 *
+	 * @return	void
+	 */
+	private function _initEmailTemplates()
+	{
+		global $conf;
+
+		dol_include_once('/webcams/lib/webcams_plan.lib.php');
+		if (!function_exists('webcamsEmailTemplateDefaults')) {
+			return;
+		}
+		$table = $this->db->prefix().'c_email_templates';
+		$position = 0;
+		foreach (webcamsEmailTemplateDefaults() as $t) {
+			$position += 10;
+			$sql = "SELECT rowid FROM ".$table." WHERE entity = ".((int) $conf->entity)." AND module = 'webcams' AND label = '".$this->db->escape($t['label'])."'";
+			$resql = $this->db->query($sql);
+			if (!$resql || $this->db->num_rows($resql)) {
+				continue;
+			}
+			$sql = "INSERT INTO ".$table." (entity, module, type_template, lang, private, fk_user, datec, label, position, enabled, active, topic, joinfiles, content)";
+			$sql .= " VALUES (".((int) $conf->entity).", 'webcams', 'webcams_webcam', '', 0, NULL, '".$this->db->idate(dol_now())."', '".$this->db->escape($t['label'])."', ".((int) $position).",";
+			$sql .= " '1', 1, '".$this->db->escape($t['topic'])."', '1', '".$this->db->escape($t['content'])."')";
+			if (!$this->db->query($sql)) {
+				dol_syslog(__METHOD__.' '.$this->db->lasterror(), LOG_WARNING);
+			}
+		}
 	}
 
 	/**

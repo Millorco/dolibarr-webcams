@@ -93,6 +93,27 @@ class ActionsWebcams extends CommonHookActions
 	}
 
 	/**
+	 * Type of email template "Webcam" (webcams_webcam) in the list of
+	 * Setup - Emails - Email templates (hook emailElementlist, context
+	 * emailtemplates): templates of the monthly report and of the certificate
+	 * of the bad weather days, sent by POST webcams/{id}/documents.
+	 *
+	 * @param	array<string,mixed>	$parameters		Hook metadata (elementList...)
+	 * @return	int								0 (the standard list is kept)
+	 */
+	public function emailElementlist($parameters)
+	{
+		global $langs;
+
+		if (!isModEnabled('webcams')) {
+			return 0;
+		}
+		$langs->load('webcams@webcams');
+		$this->results = array('webcams_webcam' => img_picto('', 'fa-video', 'class="pictofixedwidth"').dol_escape_htmltag($langs->trans('WebcamEmailTemplateType')));
+		return 0;
+	}
+
+	/**
 	 * Overload the doActions function : replacing the parent's function with the one below
 	 *
 	 * @param	array<string,mixed>	$parameters		Hook metadata (context, etc...)

@@ -202,6 +202,87 @@ if (empty($reshook)) {
 
 	$triggermodname = $object->TRIGGER_PREFIX.'_MODIFY'; // Name of trigger action code to execute when we modify record. Used in actions_addupdatedelete.inc.php
 
+	// Change of customer: propose a row of the archive after the rental (M13) for the old customer
+	if ($action == 'update' && !$cancel && $permissiontoadd && $object->id > 0 && (int) $object->fk_soc > 0 && GETPOSTISSET('fk_soc') && GETPOSTINT('fk_soc') != (int) $object->fk_soc) {
+		$backtopage = dol_buildpath('/webcams/webcam_card.php', 1).'?id='.((int) $object->id).'&action=proposearchive&archive_socid='.((int) $object->fk_soc).'&token='.newToken().'#archives';
+	}
+
+	// Archives after the rental (llx_webcams_archive)
+	if ($action == 'addarchive' && $permissiontoadd && $object->id > 0) {
+		$asoc = GETPOSTINT('archive_socid');
+		$astart = dol_mktime(12, 0, 0, GETPOSTINT('archive_startmonth'), GETPOSTINT('archive_startday'), GETPOSTINT('archive_startyear'));
+		$aend = dol_mktime(12, 0, 0, GETPOSTINT('archive_endmonth'), GETPOSTINT('archive_endday'), GETPOSTINT('archive_endyear'));
+		$auntil = dol_mktime(12, 0, 0, GETPOSTINT('archive_untilmonth'), GETPOSTINT('archive_untilday'), GETPOSTINT('archive_untilyear'));
+		$anote = dol_trunc(GETPOST('archive_note', 'alphanohtml'), 255, 'right', 'UTF-8', 1);
+		$errs = array();
+		if ($asoc <= 0) {
+			$errs[] = $langs->trans('ErrorFieldRequired', $langs->transnoentitiesnoconv('Customer'));
+		}
+		if (!$aend) {
+			$errs[] = $langs->trans('ErrorFieldRequired', $langs->transnoentitiesnoconv('WebcamRentalEnd'));
+		}
+		if (!$auntil) {
+			$errs[] = $langs->trans('ErrorFieldRequired', $langs->transnoentitiesnoconv('WebcamArchiveUntil'));
+		}
+		if ($aend && $auntil && $auntil < $aend) {
+			$errs[] = $langs->trans('WebcamArchiveUntilBeforeEnd');
+		}
+		if ($astart && $aend && $aend < $astart) {
+			$errs[] = $langs->trans('WebcamRentalEnd').': '.$langs->trans('WebcamDateBeforeStart');
+		}
+		if ($errs) {
+			setEventMessages(null, $errs, 'errors');
+			$action = 'proposearchive';
+		} else {
+			$sql = "INSERT INTO ".$db->prefix()."webcams_archive (entity, fk_webcam, fk_soc, rental_start, rental_end, archive_until, note, fk_user_creat, date_creation)";
+			$sql .= " VALUES (".((int) (empty($object->entity) ? $conf->entity : $object->entity)).", ".((int) $object->id).", ".((int) $asoc).", ";
+			$sql .= ($astart ? "'".$db->escape(dol_print_date($astart, '%Y-%m-%d'))."'" : "NULL").", '".$db->escape(dol_print_date($aend, '%Y-%m-%d'))."', '".$db->escape(dol_print_date($auntil, '%Y-%m-%d'))."', ";
+			$sql .= ($anote !== '' ? "'".$db->escape($anote)."'" : "NULL").", ".((int) $user->id).", '".$db->idate(dol_now())."')";
+			if ($db->query($sql)) {
+				setEventMessages($langs->trans('WebcamArchiveAdded'), null, 'mesgs');
+				header('Location: '.$_SERVER['PHP_SELF'].'?id='.((int) $object->id).'#archives');
+				exit;
+			}
+			setEventMessages($db->lasterrno() == 'DB_ERROR_RECORD_ALREADY_EXISTS' ? $langs->trans('WebcamArchiveExists') : $db->lasterror(), null, 'errors');
+			$action = 'proposearchive';
+		}
+	}
+	if ($action == 'confirm_deletearchive' && $confirm == 'yes' && $permissiontoadd && $object->id > 0) {
+		$sql = "DELETE FROM ".$db->prefix()."webcams_archive WHERE rowid = ".GETPOSTINT('archiveid')." AND fk_webcam = ".((int) $object->id);
+		if ($db->query($sql)) {
+			setEventMessages($langs->trans('RecordDeleted'), null, 'mesgs');
+			header('Location: '.$_SERVER['PHP_SELF'].'?id='.((int) $object->id).'#archives');
+			exit;
+		}
+		setEventMessages($db->lasterror(), null, 'errors');
+	}
+
+	// Final film delivered by the operator (the portal sets only queued and ready)
+	if ($action == 'confirm_filmdelivered' && $confirm == 'yes' && $permissiontoadd && $object->id > 0 && $object->film_status !== 'delivered') {
+		$sql = "UPDATE ".$db->prefix()."webcams_webcam SET film_status = 'delivered', fk_user_modif = ".((int) $user->id)." WHERE rowid = ".((int) $object->id);
+		if ($db->query($sql)) {
+			$object->film_status = 'delivered';
+			if (isModEnabled('agenda')) {
+				require_once DOL_DOCUMENT_ROOT.'/comm/action/class/actioncomm.class.php';
+				$ev = new ActionComm($db);
+				$ev->type_code = 'AC_OTH_AUTO';
+				$ev->code = 'AC_WEBCAMS_FILM';
+				$ev->label = dol_trunc($object->ref.' - '.$langs->transnoentitiesnoconv('WebcamEventFilmDelivered'), 255, 'right', 'UTF-8', 1);
+				$ev->note_private = $langs->transnoentitiesnoconv('WebcamEventFilmDelivered');
+				$ev->datep = dol_now();
+				$ev->percentage = -1;
+				$ev->userownerid = $user->id;
+				$ev->socid = $object->fk_soc > 0 ? $object->fk_soc : 0;
+				$ev->fk_element = $object->id;
+				$ev->elementtype = $object->element.'@'.$object->module;
+				$ev->create($user);
+			}
+			setEventMessages($langs->trans('WebcamFilmDelivered'), null, 'mesgs');
+		} else {
+			setEventMessages($db->lasterror(), null, 'errors');
+		}
+	}
+
 	// Actions cancel, add, update, update_extras, confirm_validate, confirm_delete, confirm_deleteline, confirm_clone, confirm_close, confirm_setdraft, confirm_reopen
 	include DOL_DOCUMENT_ROOT.'/core/actions_addupdatedelete.inc.php';
 
@@ -391,6 +472,13 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 	// 	$formconfirm = $form->formconfirm($_SERVER["PHP_SELF"].'?id='.$object->id, $langs->trans('XXX'), $text, 'confirm_xxx', $formquestion, 0, 1, 220);
 	// }
 
+	if ($action == 'deletearchive') {
+		$formconfirm = $form->formconfirm($_SERVER["PHP_SELF"].'?id='.$object->id.'&archiveid='.GETPOSTINT('archiveid'), $langs->trans('WebcamArchiveDelete'), $langs->trans('WebcamArchiveDeleteConfirm'), 'confirm_deletearchive', '', 0, 1);
+	}
+	if ($action == 'filmdelivered') {
+		$formconfirm = $form->formconfirm($_SERVER["PHP_SELF"].'?id='.$object->id, $langs->trans('WebcamFilmSetDelivered'), $langs->trans('WebcamFilmSetDeliveredConfirm'), 'confirm_filmdelivered', '', 'yes', 1);
+	}
+
 	// Call Hook formConfirm
 	$parameters = array('formConfirm' => $formconfirm, 'lineid' => $lineid);
 	$reshook = $hookmanager->executeHooks('formConfirm', $parameters, $object, $action); // Note that $action and $object may have been modified by hook
@@ -459,12 +547,30 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 
 	// Common attributes
 	$keyforbreak = 'last_contact';	// Technical data from the router in the second column
+	// Counters, Victron and portal are shown below with their own layout
+	$customfields = array('shutter_count', 'shots_total', 'camera_hours', 'camera_power_cycles', 'counters_date',
+		'battery_v', 'battery_v_min24', 'battery_soc', 'charge_state', 'solar_wh_yesterday', 'victron_error', 'victron_date',
+		'portal_slug', 'url_current', 'windy_published', 'windy_id',
+		'sla_enabled', 'sla_offline_hours', 'sla_response_days', 'sla_target_pct', 'sla_hours', 'sla_weekdays',
+		'availability_pct', 'availability_period',
+		'plan_level', 'plan_note', 'rental_start', 'rental_end', 'sponsor_enabled', 'sponsor_slots', 'sponsor_start', 'sponsor_end',
+		'opt_weather_cert', 'film_option', 'film_format', 'film_duration', 'film_status', 'film_url', 'report_enabled', 'report_email');
+	$savedfields = $object->fields;
+	foreach ($customfields as $k) {
+		unset($object->fields[$k]);
+	}
 	//unset($object->fields['fk_project']);				// Hide field already shown in banner
 	//unset($object->fields['fk_soc']);					// Hide field already shown in banner
 	include DOL_DOCUMENT_ROOT.'/core/tpl/commonfields_view.tpl.php';
 
 	// Other attributes. Fields from hook formObjectOptions and Extrafields.
 	include DOL_DOCUMENT_ROOT.'/core/tpl/extrafields_view.tpl.php';
+
+	$object->fields = $savedfields;
+	print '<tr class="liste_titre"><td colspan="2">'.img_picto('', 'fa-tags', 'class="pictofixedwidth"').$langs->trans('WebcamPlanBlock').'</td></tr>';
+	print webcamsCardPlanRows($db, $object);
+	print '<tr class="liste_titre"><td colspan="2">'.img_picto('', 'fa-tools', 'class="pictofixedwidth"').$langs->trans('WebcamServiceBlock').'</td></tr>';
+	print webcamsCardTechRows($object);
 
 	print '</table>';
 	print '</div>';
@@ -551,6 +657,18 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 				print dolGetButtonAction('', $langs->trans('SetToDraft'), 'default', $_SERVER["PHP_SELF"].'?id='.$object->id.'&action=confirm_setdraft&confirm=yes&token='.newToken(), '', $permissiontoadd);
 			}
 
+			// Remote access with rttys (device id = ref of the webcam)
+			$rttys = webcamsRttysUrls($object->ref);
+			if ($rttys) {
+				print dolGetButtonAction($langs->trans('WebcamRemoteTerminalHelp', $object->ref), $langs->trans('WebcamRemoteTerminal'), 'default', $rttys['terminal'], '', 1, array('attr' => array('target' => '_blank', 'rel' => 'noopener')));
+				print dolGetButtonAction($langs->trans('WebcamRemoteTerminalHelp', $object->ref), $langs->trans('WebcamRemoteLuci'), 'default', $rttys['luci'], '', 1, array('attr' => array('target' => '_blank', 'rel' => 'noopener')));
+			}
+
+			// Final film: delivered by the operator
+			if ((string) $object->film_status === 'ready') {
+				print dolGetButtonAction('', $langs->trans('WebcamFilmSetDelivered'), 'default', $_SERVER["PHP_SELF"].'?id='.$object->id.'&action=filmdelivered&token='.newToken(), '', $permissiontoadd);
+			}
+
 			// Modify
 			print dolGetButtonAction('', $langs->trans('Modify'), 'default', $_SERVER["PHP_SELF"].'?id='.$object->id.'&action=edit&token='.newToken(), '', $permissiontoadd);
 
@@ -635,7 +753,60 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 			$somethingshown = $form->showLinkedObjectBlock($object, $tmparray);
 		}
 
+		// Features from the level and the options (help, the portal computes them)
+		print '<br>';
+		print webcamsFeatureTable($object);
+
+		// Archives after the rental (M13)
+		print '<a name="archives"></a><br>';
+		$archives = webcamsArchives($db, $object->id);
+		$today = webcamsToday();
+		print load_fiche_titre($langs->trans('WebcamArchives'), '<span class="opacitymedium small">'.$langs->trans('WebcamArchivesHelp').'</span>', 'fa-archive');
+		print '<div class="div-table-responsive-no-min"><table class="noborder centpercent">';
+		print '<tr class="liste_titre"><th>'.$langs->trans('Customer').'</th><th class="center">'.$langs->trans('WebcamRental').'</th><th class="center">'.$langs->trans('WebcamArchiveUntil').'</th><th>'.$langs->trans('Note').'</th><th></th></tr>';
+		foreach ($archives as $a) {
+			$active = strcmp(substr((string) $a->archive_until, 0, 10), $today) >= 0;
+			print '<tr class="oddeven">';
+			print '<td class="tdoverflowmax200"><a href="'.DOL_URL_ROOT.'/societe/card.php?socid='.((int) $a->fk_soc).'">'.img_picto('', 'company', 'class="pictofixedwidth"').dol_escape_htmltag((string) $a->socname).'</a></td>';
+			print '<td class="center nowraponall">'.($a->rental_start ? dol_print_date($db->jdate($a->rental_start), 'day') : '...').' - '.dol_print_date($db->jdate($a->rental_end), 'day').'</td>';
+			print '<td class="center nowraponall">'.dolGetBadge(dol_print_date($db->jdate($a->archive_until), 'day'), '', $active ? 'success' : 'secondary', '', '', array('attr' => array('title' => $langs->trans($active ? 'WebcamArchiveActive' : 'WebcamArchiveExpired')))).'</td>';
+			print '<td>'.dol_escape_htmltag((string) $a->note).'</td>';
+			print '<td class="right">'.($permissiontoadd ? '<a class="reposition" href="'.$_SERVER['PHP_SELF'].'?id='.$object->id.'&action=deletearchive&archiveid='.((int) $a->rowid).'&token='.newToken().'">'.img_delete().'</a>' : '').'</td>';
+			print '</tr>';
+		}
+		if (!$archives) {
+			print '<tr><td colspan="5"><span class="opacitymedium">'.$langs->trans('WebcamArchivesNone').'</span></td></tr>';
+		}
+		print '</table></div>';
+		if ($permissiontoadd) {
+			$propose = ($action == 'proposearchive');
+			$asoc = GETPOSTINT('archive_socid');
+			if ($propose) {
+				print info_admin($langs->trans('WebcamArchivePropose'), 0, 0, 'info');
+			}
+			print '<form method="POST" action="'.$_SERVER['PHP_SELF'].'?id='.$object->id.'#archives">';
+			print '<input type="hidden" name="token" value="'.newToken().'">';
+			print '<input type="hidden" name="action" value="addarchive">';
+			print '<table class="noborder centpercent"><tr class="oddeven">';
+			print '<td>'.$form->select_company($asoc > 0 ? $asoc : '', 'archive_socid', '', 1, 0, 0, array(), 0, 'minwidth150 maxwidth200').'</td>';
+			$dstart = $propose ? $object->rental_start : '';
+			$dend = $propose ? dol_now() : '';
+			if (GETPOSTISSET('archive_endyear')) {
+				$dstart = dol_mktime(12, 0, 0, GETPOSTINT('archive_startmonth'), GETPOSTINT('archive_startday'), GETPOSTINT('archive_startyear'));
+				$dend = dol_mktime(12, 0, 0, GETPOSTINT('archive_endmonth'), GETPOSTINT('archive_endday'), GETPOSTINT('archive_endyear'));
+			}
+			$duntil = GETPOSTISSET('archive_untilyear') ? dol_mktime(12, 0, 0, GETPOSTINT('archive_untilmonth'), GETPOSTINT('archive_untilday'), GETPOSTINT('archive_untilyear')) : '';
+			print '<td class="nowraponall">'.$form->selectDate($dstart ? $dstart : -1, 'archive_start', 0, 0, 1, '', 1, 0).' - '.$form->selectDate($dend ? $dend : -1, 'archive_end', 0, 0, 1, '', 1, 0).'</td>';
+			print '<td class="nowraponall">'.$form->selectDate($duntil ? $duntil : -1, 'archive_until', 0, 0, 1, '', 1, 0).'</td>';
+			print '<td><input type="text" name="archive_note" class="flat maxwidth150" maxlength="255" value="'.dol_escape_htmltag(GETPOST('archive_note', 'alphanohtml')).'" placeholder="'.dol_escape_htmltag($langs->trans('Note')).'"></td>';
+			print '<td class="right"><input type="submit" class="button small" value="'.dol_escape_htmltag($langs->trans('Add')).'"></td>';
+			print '</tr></table></form>';
+		}
+
 		print '</div><div class="fichehalfright">';
+
+		// Availability of the last 12 months (register written by webcam-portal)
+		print webcamsAvailabilityTable($db, $object, 12);
 
 		// BEGIN MODULEBUILDER TAB AGENDA
 		$MAXEVENT = 10;
@@ -661,7 +832,7 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 	}
 
 	// Presend form
-	$modelmail = 'webcam';
+	$modelmail = 'webcams_webcam'; // same type as the templates of POST webcams/{id}/documents
 	$defaulttopic = 'InformationMessage';
 	$diroutput = $conf->webcams->dir_output;
 	$trackid = 'webcam'.$object->id;

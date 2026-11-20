@@ -248,6 +248,11 @@ print '</div>';
 
 print dol_get_fiche_end();
 
+// Documents of the services sent by webcam-portal (monthly report, bad weather certificate), with type and period
+$reldir = preg_replace('/^'.preg_quote(DOL_DATA_ROOT, '/').'\//', '', rtrim($upload_dir, '/'));
+print webcamsServiceDocumentsTable($db, $object, $reldir, GETPOST('doctype', 'aZ09'));
+print '<br>';
+
 $modulepart = 'webcams';
 $param = '&id='.$object->id;
 //$relativepathwithnofile='webcam/' . dol_sanitizeFileName($object->id).'/';

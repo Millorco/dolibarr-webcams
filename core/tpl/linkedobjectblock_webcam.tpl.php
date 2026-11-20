@@ -44,7 +44,7 @@ $linkedObjectBlock = $GLOBALS['linkedObjectBlock'];
 /** @var Webcam[] $linkedObjectBlock */
 
 // Load translation files required by the page
-$langs->load("webcams");
+$langs->load("webcams@webcams");
 
 $total = 0;
 $ilink = 0;

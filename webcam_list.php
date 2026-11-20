@@ -204,8 +204,12 @@ $reshook = $hookmanager->executeHooks('completeArrayFields', $parameters, $objec
 	'anotherfield' => array('type'=>'integer', 'label'=>'AnotherField', 'checked'=>'1', 'enabled'=>'1', 'position'=>'90', 'csslist'=>'right'),
 ));*/
 
-// Change position of fields in arrayfield and object
-include DOL_DOCUMENT_ROOT.'/core/tpl/arrayfield_object_position_fields.tpl.php';
+// Change position of fields in arrayfield and object (template of Dolibarr 21+)
+if (is_file(DOL_DOCUMENT_ROOT.'/core/tpl/arrayfield_object_position_fields.tpl.php')) {
+	include DOL_DOCUMENT_ROOT.'/core/tpl/arrayfield_object_position_fields.tpl.php';
+}
+// Checkbox column on the left ($conf->main_checkbox_left_column exists from Dolibarr 21)
+$checkboxleft = isset($conf->main_checkbox_left_column) ? $conf->main_checkbox_left_column : getDolGlobalInt('MAIN_CHECKBOX_LEFT_COLUMN');
 
 $object->fields = dol_sort_array($object->fields, 'position');
 $arrayfields = dol_sort_array($arrayfields, 'position');
@@ -640,7 +644,7 @@ if (!empty($moreforfilter)) {
 }
 
 $varpage = empty($contextpage) ? $_SERVER["PHP_SELF"] : $contextpage;
-$htmlofselectarray = $form->multiSelectArrayWithCheckbox('selectedfields', $arrayfields, $varpage, $conf->main_checkbox_left_column, 1);  // This also change content of $arrayfields with user setup
+$htmlofselectarray = $form->multiSelectArrayWithCheckbox('selectedfields', $arrayfields, $varpage, $checkboxleft, 1);  // This also change content of $arrayfields with user setup
 $selectedfields = (($mode != 'kanban' && $mode != 'kanbangroupby') ? $htmlofselectarray : '');
 $selectedfields .= (count($arrayofmassactions) ? $form->showCheckAddButtons('checkforselect', 1) : '');
 
@@ -651,7 +655,7 @@ print '<table class="tagtable nobottomiftotal noborder liste'.($moreforfilter ? 
 // --------------------------------------------------------------------
 print '<tr class="liste_titre_filter">';
 // Action column
-if ($conf->main_checkbox_left_column) {
+if ($checkboxleft) {
 	print '<td class="liste_titre center maxwidthsearch">';
 	$searchpicto = $form->showFilterButtons('left');
 	print $searchpicto;
@@ -709,7 +713,7 @@ print $hookmanager->resPrint;
 	print '<td class="liste_titre"></td>';
 }*/
 // Action column
-if (!$conf->main_checkbox_left_column) {
+if (!$checkboxleft) {
 	print '<td class="liste_titre center maxwidthsearch">';
 	$searchpicto = $form->showFilterButtons();
 	print $searchpicto;
@@ -724,7 +728,7 @@ $totalarray['nbfield'] = 0;
 // --------------------------------------------------------------------
 print '<tr class="liste_titre">';
 // Action column
-if ($conf->main_checkbox_left_column) {
+if ($checkboxleft) {
 	print getTitleFieldOfList($selectedfields, 0, $_SERVER["PHP_SELF"], '', '', '', '', $sortfield, $sortorder, 'center maxwidthsearch ')."\n";
 	$totalarray['nbfield']++;
 }
@@ -756,7 +760,7 @@ print $hookmanager->resPrint;
 	$totalarray['nbfield']++;
 }*/
 // Action column
-if (!$conf->main_checkbox_left_column) {
+if (!$checkboxleft) {
 	print getTitleFieldOfList(($mode != 'kanban' ? $selectedfields : ''), 0, $_SERVER["PHP_SELF"], '', '', '', '', $sortfield, $sortorder, 'center maxwidthsearch ')."\n";
 	$totalarray['nbfield']++;
 }
@@ -828,7 +832,7 @@ while ($i < $imaxinloop) {
 		print '<tr data-rowid="'.$object->id.'" class="oddeven row-with-select">';
 
 		// Action column
-		if ($conf->main_checkbox_left_column) {
+		if ($checkboxleft) {
 			print '<td class="nowrap center">';
 			if ($massactionbutton || $massaction) { // If we are in select mode (massactionbutton defined) or if we have already selected and sent an action ($massaction) defined
 				$selected = 0;
@@ -911,7 +915,7 @@ while ($i < $imaxinloop) {
 		}*/
 
 		// Action column
-		if (empty($conf->main_checkbox_left_column)) {
+		if (empty($checkboxleft)) {
 			print '<td class="nowrap center">';
 			if ($massactionbutton || $massaction) { // If we are in select mode (massactionbutton defined) or if we have already selected and sent an action ($massaction) defined
 				$selected = 0;
